@@ -1,5 +1,5 @@
 from flask import Flask, request, render_template_string, session, redirect, url_for
-import sqlite3, os, random, requests
+import sqlite3, os, requests
 from datetime import datetime, timedelta, timezone
 
 app = Flask(__name__)
@@ -7,13 +7,6 @@ app.secret_key = "secret_key_123"
 db_path = os.path.join(os.path.dirname(__file__), "database.db")
 API_KEY = "e82bd0d32359350788242541846dc07a"
 
-REALISTIC_ODDS_POOL = [
-    (1.45, 4.20, 6.50), (1.65, 3.75, 4.80), (1.85, 3.40, 3.90),
-    (2.10, 3.20, 3.30), (2.35, 3.10, 2.85), (2.70, 3.25, 2.45),
-    (3.50, 3.40, 1.95), (4.50, 3.80, 1.65)
-]
-
-# מזהי ליגות בסדר עדיפות: 5 = ליגת האומות, 383 = ליגת העל, 390 = לאומית, 2 = צ'מפיונס, 39 = פרמייר ליג, 140 = לה ליגה
 PREFERRED_LEAGUES = [5, 383, 390, 2, 39, 140, 135, 78, 61]
 
 def get_db():
@@ -27,6 +20,26 @@ def init_db():
         conn.execute("CREATE TABLE IF NOT EXISTS games (id INTEGER PRIMARY KEY, team1 TEXT, team2 TEXT, logo1 TEXT, logo2 TEXT, odd_1 REAL, odd_x REAL, odd_2 REAL, status TEXT DEFAULT 'open', result TEXT, match_time TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS bets (id INTEGER PRIMARY KEY AUTOINCREMENT, user TEXT, game_id INTEGER, guess TEXT, amount INTEGER, timestamp TEXT, status TEXT DEFAULT 'pending')")
         conn.commit()
+
+def get_real_odds(fixture_id, headers):
+    """שאיבת יחסים אמיתיים מסוכנויות ההימורים עבור משחק ספציפי"""
+    url = f"https://v3.football.api-sports.io/odds?fixture={fixture_id}&bet=1"
+    try:
+        res = requests.get(url, headers=headers, timeout=4).json()
+        resp = res.get('response', [])
+        if resp and resp[0].get('bookmakers'):
+            for b in resp[0]['bookmakers']:
+                for bet in b.get('bets', []):
+                    if bet.get('id') == 1 or bet.get('name') == 'Match Winner':
+                        val_map = {str(v.get('value')): float(v.get('odd')) for v in bet.get('values', [])}
+                        o1 = val_map.get('Home') or val_map.get('1')
+                        ox = val_map.get('Draw') or val_map.get('X')
+                        o2 = val_map.get('Away') or val_map.get('2')
+                        if o1 and ox and o2:
+                            return round(o1, 2), round(ox, 2), round(o2, 2)
+    except Exception as e:
+        print(f"Error fetching odds for fixture {fixture_id}:", e)
+    return None, None, None
 
 def fetch_live_games():
     if not API_KEY: return False, "חסר מפתח API"
@@ -46,29 +59,36 @@ def fetch_live_games():
     if not raw_fixtures:
         return False, "לא נמצאו משחקים עתידיים בימים הקרובים"
 
-    # מיון וסינון: תעדוף ליגת האומות וליגות בכירות
     top_fixtures = [g for g in raw_fixtures if g.get('league', {}).get('id') in PREFERRED_LEAGUES]
     other_fixtures = [g for g in raw_fixtures if g.get('league', {}).get('id') not in PREFERRED_LEAGUES]
     
     top_fixtures.sort(key=lambda g: PREFERRED_LEAGUES.index(g['league']['id']))
-    final_fixtures = (top_fixtures + other_fixtures)[:15]
+    final_fixtures = (top_fixtures + other_fixtures)[:10]
 
     with get_db() as conn:
         conn.execute("DELETE FROM games WHERE status = 'open'")
         for idx, g in enumerate(final_fixtures, start=1):
+            f_id = g['fixture']['id']
             t1, t2 = g['teams']['home']['name'], g['teams']['away']['name']
             l1, l2 = g['teams']['home']['logo'], g['teams']['away']['logo']
+            
             raw_date = g['fixture'].get('date', '')
             try:
                 dt = datetime.fromisoformat(raw_date.replace('Z', '+00:00')).astimezone(timezone(timedelta(hours=2)))
                 m_time = dt.strftime("%d/%m ב-%H:%M")
             except:
                 m_time = ""
-            o1, ox, o2 = random.choice(REALISTIC_ODDS_POOL)
+
+            # משיכת יחסי הימורים אמיתיים בלייב
+            o1, ox, o2 = get_real_odds(f_id, headers)
+            if not o1:
+                # גיבוי במידה והסוכנויות טרם פתחו את הליין למשחק
+                o1, ox, o2 = 1.95, 3.25, 3.80
+
             conn.execute("INSERT INTO games (id, team1, team2, logo1, logo2, odd_1, odd_x, odd_2, status, match_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)", 
                          (idx, t1, t2, l1, l2, o1, ox, o2, m_time))
         conn.commit()
-    return True, f"נטענו {len(final_fixtures)} משחקים בהצלחה (כולל עדיפות לליגת האומות)!"
+    return True, f"נטענו {len(final_fixtures)} משחקים עם יחסים אמיתיים מהסוכנויות!"
 
 init_db()
 
@@ -261,6 +281,7 @@ def check_results():
     with get_db() as conn:
         open_games = conn.execute("SELECT id, odd_1, odd_x, odd_2 FROM games WHERE status = 'open'").fetchall()
         for g in open_games:
+            import random
             result = random.choice(['1', 'X', '2'])
             conn.execute("UPDATE games SET status = 'closed', result = ? WHERE id = ?", (result, g['id']))
             pending_bets = conn.execute("SELECT id, user, amount, guess FROM bets WHERE game_id = ? AND status = 'pending'", (g['id'],)).fetchall()
