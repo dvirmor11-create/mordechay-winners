@@ -174,4 +174,15 @@ def bet():
         with get_db() as conn:
             if conn.execute("SELECT id FROM bets WHERE user = ? AND game_id = ?", (user, game_id)).fetchone():
                 return redirect("/?error=already_bet")
-            bal = conn.execute("SELECT balance
+            bal = conn.execute("SELECT balance FROM users WHERE name = ?", (user,)).fetchone()["balance"]
+            if bal >= amount:
+                conn.execute("UPDATE users SET balance = balance - ? WHERE name = ?", (amount, user))
+                conn.execute("INSERT INTO bets (user, game_id, guess, amount, timestamp, status) VALUES (?, ?, ?, ?, ?, 'pending')", (user, game_id, guess, amount, datetime.now().strftime("%Y-%m-%d %H:%M")))
+                conn.commit()
+    return redirect("/history")
+
+@app.route("/update_live")
+def update_live():
+    if not fetch_live_games():
+        with get_db() as conn: generate_weekly_games(conn)
+    return "Games updated", 200
