@@ -1,6 +1,6 @@
 from flask import Flask, request, render_template_string, session, redirect, url_for
 import sqlite3, os, random, requests
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 app.secret_key = "secret_key_123"
@@ -22,34 +22,38 @@ def init_db():
 def fetch_live_games():
     if not API_KEY: return False, "No API key"
     
-    url = "https://v3.football.api-sports.io/fixtures?next=15"
     headers = {
         'x-apisports-key': API_KEY,
         'x-rapidapi-key': API_KEY,
         'x-rapidapi-host': "v3.football.api-sports.io"
     }
     
-    try:
-        res = requests.get(url, headers=headers, timeout=10).json()
-        
-        if res.get('errors') and len(res['errors']) > 0:
-            return False, f"API Error: {res['errors']}"
-            
-        fixtures = res.get('response', [])
-        if not fixtures:
-            return False, "API returned 0 fixtures"
+    fixtures = []
+    # שאיבת משחקים לפי תאריכים מותאמת למסלול החינמי (ללא פרמטר next)
+    for day_offset in range(0, 5):
+        target_date = (datetime.now() + timedelta(days=day_offset)).strftime("%Y-%m-%d")
+        url = f"https://v3.football.api-sports.io/fixtures?date={target_date}"
+        try:
+            res = requests.get(url, headers=headers, timeout=5).json()
+            if res.get('response'):
+                fixtures.extend(res['response'])
+            if len(fixtures) >= 15:
+                break
+        except Exception as e:
+            print(e)
 
-        with get_db() as conn:
-            conn.execute("DELETE FROM games WHERE status = 'open'")
-            for idx, g in enumerate(fixtures, start=1):
-                t1, t2 = g['teams']['home']['name'], g['teams']['away']['name']
-                l1, l2 = g['teams']['home']['logo'], g['teams']['away']['logo']
-                o1, ox, o2 = round(random.uniform(1.4, 2.8), 2), round(random.uniform(2.8, 3.8), 2), round(random.uniform(1.8, 3.5), 2)
-                conn.execute("INSERT INTO games (id, team1, team2, logo1, logo2, odd_1, odd_x, odd_2, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')", (idx, t1, t2, l1, l2, o1, ox, o2))
-            conn.commit()
-        return True, f"Loaded {len(fixtures)} games successfully!"
-    except Exception as e:
-        return False, f"Exception: {str(e)}"
+    if not fixtures:
+        return False, "No fixtures found for upcoming days"
+
+    with get_db() as conn:
+        conn.execute("DELETE FROM games WHERE status = 'open'")
+        for idx, g in enumerate(fixtures[:15], start=1):
+            t1, t2 = g['teams']['home']['name'], g['teams']['away']['name']
+            l1, l2 = g['teams']['home']['logo'], g['teams']['away']['logo']
+            o1, ox, o2 = round(random.uniform(1.4, 2.8), 2), round(random.uniform(2.8, 3.8), 2), round(random.uniform(1.8, 3.5), 2)
+            conn.execute("INSERT INTO games (id, team1, team2, logo1, logo2, odd_1, odd_x, odd_2, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')", (idx, t1, t2, l1, l2, o1, ox, o2))
+        conn.commit()
+    return True, f"Loaded {len(fixtures[:15])} games successfully!"
 
 init_db()
 
