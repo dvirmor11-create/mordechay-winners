@@ -19,30 +19,25 @@ from flask import (
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-DB_PATH = os.environ.get(
-    "DATABASE_PATH",
-    os.path.join(BASE_DIR, "winner_friends.db")
-)
+DB_PATH = os.path.join(BASE_DIR, "winner_friends.db")
 
-API_KEY = os.environ.get("API_FOOTBALL_KEY", "").strip()
+# API KEY FROM THE ORIGINAL GEMINI CODE
+API_KEY = "e82bd0d32359350788242541846dc07a"
 
-SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "").strip()
-
-if not SECRET_KEY:
-    SECRET_KEY = secrets.token_hex(32)
+API_URL = "https://v3.football.api-sports.io"
 
 app = Flask(__name__)
-app.secret_key = SECRET_KEY
+app.secret_key = os.environ.get(
+    "FLASK_SECRET_KEY",
+    secrets.token_hex(32)
+)
 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "0") == "1"
+    SESSION_COOKIE_SAMESITE="Lax"
 )
 
 TZ = ZoneInfo("Asia/Jerusalem")
-
-API_URL = "https://v3.football.api-sports.io"
 
 ALLOWED_LEAGUES = {
     383: "ליגת העל בישראל",
@@ -183,7 +178,6 @@ def init_db():
 
     with get_db() as conn:
 
-        # Detect an older incompatible games schema.
         columns = {
             row["name"]
             for row in conn.execute("PRAGMA table_info(games)")
@@ -191,11 +185,16 @@ def init_db():
 
         if columns and "fixture_id" not in columns:
 
-            conn.execute(
-                "ALTER TABLE bets RENAME TO bets_legacy"
-            ) if conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='bets'"
-            ).fetchone() else None
+            bets_exists = conn.execute("""
+                SELECT 1
+                FROM sqlite_master
+                WHERE type='table' AND name='bets'
+            """).fetchone()
+
+            if bets_exists:
+                conn.execute(
+                    "ALTER TABLE bets RENAME TO bets_legacy"
+                )
 
             conn.execute(
                 "ALTER TABLE games RENAME TO games_legacy"
@@ -252,6 +251,21 @@ def init_db():
         ON games(status);
         """)
 
+        # Support an older users table.
+        user_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(users)")
+        }
+
+        if "created_at" not in user_columns:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN created_at TEXT"
+            )
+            conn.execute(
+                "UPDATE users SET created_at=? WHERE created_at IS NULL",
+                (now_iso(),)
+            )
+
         conn.commit()
 
 
@@ -260,11 +274,6 @@ def init_db():
 # ==================================================
 
 def api_get(path, params):
-
-    if not API_KEY:
-        raise RuntimeError(
-            "לא הוגדר API_FOOTBALL_KEY ב-Render"
-        )
 
     response = requests.get(
         API_URL + path,
@@ -367,9 +376,6 @@ def get_real_odds(fixture_id):
 # ==================================================
 
 def fetch_live_games(days=7):
-
-    if not API_KEY:
-        return 0, "חסר API_FOOTBALL_KEY"
 
     fixtures = {}
     today = now_local().date()
@@ -537,9 +543,6 @@ def fetch_live_games(days=7):
 
 def check_real_results():
 
-    if not API_KEY:
-        return 0, "חסר מפתח API."
-
     with get_db() as conn:
 
         games = conn.execute("""
@@ -559,7 +562,6 @@ def check_real_results():
     finished = []
     errors = []
 
-    # API-Football supports fixture ID batches.
     for start in range(0, len(fixture_ids), 20):
 
         batch = fixture_ids[start:start + 20]
@@ -582,12 +584,10 @@ def check_real_results():
                     "status", {}
                 ).get("short")
 
-                # Only actual finished matches.
                 if status not in ("FT", "AET", "PEN"):
                     continue
 
-                # Match Winner is based on regular time,
-                # not extra-time or penalty shootout result.
+                # Regular-time score only.
                 score = item.get("score", {}).get(
                     "fulltime"
                 ) or {}
@@ -641,7 +641,6 @@ def check_real_results():
                 fixture_id
             ))
 
-            # Prevent duplicate settlement.
             if updated.rowcount == 0:
                 continue
 
