@@ -1,6 +1,6 @@
 from flask import Flask, request, render_template_string, session, redirect, url_for
 import sqlite3, os, random, requests
-from datetime import datetime, timedelta
+from datetime import datetime
 
 app = Flask(__name__)
 app.secret_key = "secret_key_123"
@@ -21,41 +21,26 @@ def init_db():
 
 def fetch_live_games():
     if not API_KEY: return False
-    today = datetime.now().strftime("%Y-%m-%d")
-    next_week = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+    url = "https://v3.football.api-sports.io/fixtures?next=15"
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
     
-    fixtures = []
-    # ליגות: 5 = ליגת האומות (UEFA Nations League), 383 = ליגת העל, 390 = לאומית
-    leagues = [5, 383, 390]
-    
-    for league_id in leagues:
-        url = f"https://v3.football.api-sports.io/fixtures?league={league_id}&from={today}&to={next_week}"
-        try:
-            res = requests.get(url, headers=headers, timeout=5).json()
-            fixtures.extend(res.get('response', []))
-        except Exception as e:
-            print(e)
-            
-    if not fixtures:
-        for league_id in leagues:
-            url = f"https://v3.football.api-sports.io/fixtures?league={league_id}&next=10"
-            try:
-                res = requests.get(url, headers=headers, timeout=5).json()
-                fixtures.extend(res.get('response', []))
-            except Exception as e:
-                print(e)
+    try:
+        res = requests.get(url, headers=headers, timeout=10).json()
+        fixtures = res.get('response', [])
+        if not fixtures: return False
 
-    with get_db() as conn:
-        conn.execute("DELETE FROM games WHERE status = 'open'")
-        if fixtures:
-            for idx, g in enumerate(fixtures[:15], start=1):
+        with get_db() as conn:
+            conn.execute("DELETE FROM games WHERE status = 'open'")
+            for idx, g in enumerate(fixtures, start=1):
                 t1, t2 = g['teams']['home']['name'], g['teams']['away']['name']
                 l1, l2 = g['teams']['home']['logo'], g['teams']['away']['logo']
-                o1, ox, o2 = round(random.uniform(1.8, 2.5), 2), round(random.uniform(2.8, 3.5), 2), round(random.uniform(2.0, 3.0), 2)
+                o1, ox, o2 = round(random.uniform(1.4, 2.8), 2), round(random.uniform(2.8, 3.8), 2), round(random.uniform(1.8, 3.5), 2)
                 conn.execute("INSERT INTO games (id, team1, team2, logo1, logo2, odd_1, odd_x, odd_2, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')", (idx, t1, t2, l1, l2, o1, ox, o2))
-        conn.commit()
-    return len(fixtures) > 0
+            conn.commit()
+        return True
+    except Exception as e:
+        print(e)
+        return False
 
 init_db()
 
@@ -70,7 +55,7 @@ body { font-family: sans-serif; text-align: center; background: #1e3c72; color: 
 button { background: #ff4757; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 5px; }
 input { padding: 8px; margin: 5px; border: 1px solid #ccc; border-radius: 5px; }
 .nav a { color: white; margin: 0 10px; font-weight: bold; text-decoration: none; }
-.team-logo { width: 40px; height: 40px; vertical-align: middle; }
+.team-logo { width: 35px; height: 35px; vertical-align: middle; margin: 0 5px; }
 .alert { background: #ff4757; color: white; padding: 10px; border-radius: 5px; margin: 10px; }
 </style>
 </head>
@@ -93,11 +78,11 @@ input { padding: 8px; margin: 5px; border: 1px solid #ccc; border-radius: 5px; }
 
 {% if view == 'games' %}
   {% if not games %}
-    <div class="card"><h3>אין משחקים בשבוע הקרוב</h3></div>
+    <div class="card"><h3>אין משחקים פתוחים כרגע</h3></div>
   {% endif %}
   {% for g in games %}
   <div class="card">
-    <div><img src="{{ g['logo1'] }}" class="team-logo"> {{ g['team1'] }} VS {{ g['team2'] }} <img src="{{ g['logo2'] }}" class="team-logo"></div>
+    <div><img src="{{ g['logo1'] }}" class="team-logo"> <b>{{ g['team1'] }}</b> VS <b>{{ g['team2'] }}</b> <img src="{{ g['logo2'] }}" class="team-logo"></div>
     <form method="POST" action="/bet">
       <input type="hidden" name="game_id" value="{{ g['id'] }}">
       <label><input type="radio" name="guess" value="1" required> 1 ({{ g['odd_1'] }})</label>
@@ -185,5 +170,5 @@ def bet():
 
 @app.route("/update_live")
 def update_live():
-    found = fetch_live_games()
-    return f"Games updated. Live games found: {found}", 200
+    success = fetch_live_games()
+    return f"Games updated. Success: {success}", 200
