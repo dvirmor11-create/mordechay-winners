@@ -10,7 +10,7 @@ app.secret_key = "secret_key_for_app_123"
 db_path = os.path.join(os.path.dirname(__file__), "database.db")
 
 # שים כאן את מפתח ה-API החינמי שלך מ- api-football.com כדי לשאוב נתונים בלייב
-API_KEY = "YOUR_API_KEY_HERE"
+API_KEY = "e82bd0d32359350788242541846dc07a"
 
 def get_db():
     conn = sqlite3.connect(db_path)
