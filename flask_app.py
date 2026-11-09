@@ -10,7 +10,6 @@ API_KEY = "e82bd0d32359350788242541846dc07a"
 ALLOWED_LEAGUES = [383, 390, 140, 39, 5, 2, 3, 848]
 
 TRANSLATIONS_MAP = {
-    # ליגות בישראל
     "Maccabi Tel Aviv": "מכבי תל אביב", "Maccabi Haifa": "מכבי חיפה", "Hapoel Beer Sheva": "הפועל באר שבע",
     "Beitar Jerusalem": "בית\"ר ירושלים", "Hapoel Tel Aviv": "הפועל תל אביב", "Maccabi Netanya": "מכבי נתניה",
     "Hapoel Haifa": "הפועל חיפה", "Bnei Sakhnin": "בני סכנין", "Hapoel Jerusalem": "הפועל ירושלים",
@@ -20,21 +19,16 @@ TRANSLATIONS_MAP = {
     "Hapoel Rishon LeZion": "הפועל ראשון לציון", "Hapoel Afula": "הפועל עפולה", "Hapoel Umm al-Fahm": "הפועל אום אל-פחם",
     "Maccabi Jaffa": "מכבי יפו", "Hapoel Nir Ramat HaSharon": "הפועל רמת השרון", "Ironi Tiberias": "עירוני טבריה",
     "Maccabi Herzliya": "מכבי הרצליה", "Sektzia Nes Tziona": "סקציית נס ציונה", "Hapoel Nof HaGalil": "הפועל נוף הגליל",
-    
-    # אנגליה & ספרד
     "Real Madrid": "ריאל מדריד", "Barcelona": "ברצלונה", "Atletico Madrid": "אתלטיקו מדריד", "Sevilla": "סביליה",
     "Villarreal": "ויאריאל", "Real Sociedad": "ריאל סוסיאדד", "Girona": "ג'ירונה", "Real Betis": "ריאל בטיס",
     "Arsenal": "ארסנל", "Manchester City": "מנצ'סטר סיטי", "Liverpool": "ליברפול", "Chelsea": "צ'לסי",
     "Tottenham": "טוטנהאם", "Manchester United": "מנצ'סטר יונייטד", "Aston Villa": "אסטון וילה", "Newcastle": "ניוקאסל",
-    
-    # נבחרות
     "Israel": "ישראל", "France": "צרפת", "Italy": "איטליה", "Belgium": "בלגיה", "Spain": "ספרד",
     "England": "אנגליה", "Germany": "גרמניה", "Portugal": "פורטוגל", "Netherlands": "הולנד", "Croatia": "קרואטיה"
 }
 
 def translate_team(team_name):
-    if team_name in TRANSLATIONS_MAP:
-        return TRANSLATIONS_MAP[team_name]
+    if team_name in TRANSLATIONS_MAP: return TRANSLATIONS_MAP[team_name]
     clean_name = re.sub(r'\b(FC|F\.C\.|Club|Town|City|United)\b', '', team_name, flags=re.IGNORECASE).strip()
     return TRANSLATIONS_MAP.get(clean_name, team_name)
 
@@ -57,27 +51,15 @@ def get_real_odds(fixture_id, headers):
         resp = res.get('response', [])
         if resp and resp[0].get('bookmakers'):
             bookmakers = resp[0]['bookmakers']
-            selected_bm = None
-            for preferred_id in [8, 1, 2, 6]:
-                for bm in bookmakers:
-                    if bm.get('id') == preferred_id:
-                        selected_bm = bm
-                        break
-                if selected_bm: break
-            
-            if not selected_bm:
-                selected_bm = bookmakers[0]
-
+            selected_bm = next((bm for p_id in [8, 1, 2, 6] for bm in bookmakers if bm.get('id') == p_id), bookmakers[0])
             for bet in selected_bm.get('bets', []):
                 if bet.get('id') == 1 or bet.get('name') == 'Match Winner':
                     val_map = {str(v.get('value')): float(v.get('odd')) for v in bet.get('values', [])}
                     o1 = val_map.get('Home') or val_map.get('1')
                     ox = val_map.get('Draw') or val_map.get('X')
                     o2 = val_map.get('Away') or val_map.get('2')
-                    if o1 and ox and o2:
-                        return round(o1, 2), round(ox, 2), round(o2, 2)
-    except Exception as e:
-        print(f"Error fetching odds for fixture {fixture_id}:", e)
+                    if o1 and ox and o2: return round(o1, 2), round(ox, 2), round(o2, 2)
+    except: pass
     return None, None, None
 
 def fetch_live_games():
@@ -85,51 +67,51 @@ def fetch_live_games():
     headers = {'x-apisports-key': API_KEY, 'x-rapidapi-key': API_KEY, 'x-rapidapi-host': "v3.football.api-sports.io"}
     
     raw_fixtures = []
-    # סריקת משחקים מהיום ועד 7 ימים קדימה (שבוע מהיום)
+    api_errors = []
+    
     for day_offset in range(0, 8):
         target_date = (datetime.now() + timedelta(days=day_offset)).strftime("%Y-%m-%d")
         url = f"https://v3.football.api-sports.io/fixtures?date={target_date}"
         try:
-            res = requests.get(url, headers=headers, timeout=5).json()
-            if res.get('response'):
-                raw_fixtures.extend(res['response'])
+            res_json = requests.get(url, headers=headers, timeout=5).json()
+            if res_json.get('errors'):
+                api_errors.append(str(res_json['errors']))
+            if res_json.get('response'):
+                raw_fixtures.extend(res_json['response'])
         except Exception as e:
-            print(e)
+            print(f"Request failed: {e}")
 
-    # סינון לפי ליגות מאושרות
+    # בדיקה האם ה-API חסם אותנו בגלל מגבלת 100 פניות
+    if api_errors and not raw_fixtures:
+        return False, f"חסימת API (כנראה נגמרה המכסה היומית): {api_errors[0]}"
+
     filtered_fixtures = [g for g in raw_fixtures if g.get('league', {}).get('id') in ALLOWED_LEAGUES]
-    # מיון לפי עדיפות הליגה, ואז לפי תאריך המשחק
     filtered_fixtures.sort(key=lambda g: (ALLOWED_LEAGUES.index(g['league']['id']), g['fixture']['timestamp']))
-    
-    # הגדלנו ל-15 משחקים כדי להכיל משחקים רחוקים יותר מאותו שבוע
     final_fixtures = filtered_fixtures[:15]
 
     if not final_fixtures:
-        return False, "לא נמצאו משחקים בליגות המבוקשות בשבוע הקרוב"
+        return False, "לא נמצאו משחקים בליגות המבוקשות בשבוע הקרוב (או שהמשחקים סוננו)"
 
     with get_db() as conn:
         conn.execute("DELETE FROM games WHERE status = 'open'")
         for idx, g in enumerate(final_fixtures, start=1):
             f_id = g['fixture']['id']
-            t1 = translate_team(g['teams']['home']['name'])
-            t2 = translate_team(g['teams']['away']['name'])
+            t1, t2 = translate_team(g['teams']['home']['name']), translate_team(g['teams']['away']['name'])
             l1, l2 = g['teams']['home']['logo'], g['teams']['away']['logo']
             
             raw_date = g['fixture'].get('date', '')
             try:
                 dt = datetime.fromisoformat(raw_date.replace('Z', '+00:00')).astimezone(timezone(timedelta(hours=2)))
                 m_time = dt.strftime("%d/%m ב-%H:%M")
-            except:
-                m_time = ""
+            except: m_time = ""
 
             o1, ox, o2 = get_real_odds(f_id, headers)
-            if not o1:
-                o1, ox, o2 = 9.99, 9.99, 9.99
+            if not o1: o1, ox, o2 = 9.99, 9.99, 9.99
 
             conn.execute("INSERT INTO games (id, team1, team2, logo1, logo2, odd_1, odd_x, odd_2, status, match_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)", 
                          (idx, t1, t2, l1, l2, o1, ox, o2, m_time))
         conn.commit()
-    return True, f"נטענו {len(final_fixtures)} משחקים לשבוע הקרוב בהצלחה!"
+    return True, f"נטענו {len(final_fixtures)} משחקים בהצלחה!"
 
 init_db()
 
@@ -298,8 +280,7 @@ def bet():
     try:
         amount = int(request.form.get("amount", 0))
         game_id = int(request.form.get("game_id"))
-    except:
-        return redirect("/")
+    except: return redirect("/")
     guess = request.form.get("guess")
     
     if user and amount > 0:
@@ -307,8 +288,7 @@ def bet():
             if conn.execute("SELECT id FROM bets WHERE user = ? AND game_id = ?", (user, game_id)).fetchone():
                 return redirect("/?msg=already_bet")
             row = conn.execute("SELECT balance FROM users WHERE name = ?", (user,)).fetchone()
-            if not row or row["balance"] < amount:
-                return redirect("/?msg=no_balance")
+            if not row or row["balance"] < amount: return redirect("/?msg=no_balance")
             
             conn.execute("UPDATE users SET balance = balance - ? WHERE name = ?", (amount, user))
             conn.execute("INSERT INTO bets (user, game_id, guess, amount, timestamp, status) VALUES (?, ?, ?, ?, ?, 'pending')", 
