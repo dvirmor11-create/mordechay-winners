@@ -22,21 +22,31 @@ def init_db():
         conn.commit()
 
 def get_real_odds(fixture_id, headers):
-    """שאיבת יחסים אמיתיים מסוכנויות ההימורים עבור משחק ספציפי"""
     url = f"https://v3.football.api-sports.io/odds?fixture={fixture_id}&bet=1"
     try:
-        res = requests.get(url, headers=headers, timeout=4).json()
+        res = requests.get(url, headers=headers, timeout=6).json()
         resp = res.get('response', [])
         if resp and resp[0].get('bookmakers'):
-            for b in resp[0]['bookmakers']:
-                for bet in b.get('bets', []):
-                    if bet.get('id') == 1 or bet.get('name') == 'Match Winner':
-                        val_map = {str(v.get('value')): float(v.get('odd')) for v in bet.get('values', [])}
-                        o1 = val_map.get('Home') or val_map.get('1')
-                        ox = val_map.get('Draw') or val_map.get('X')
-                        o2 = val_map.get('Away') or val_map.get('2')
-                        if o1 and ox and o2:
-                            return round(o1, 2), round(ox, 2), round(o2, 2)
+            bookmakers = resp[0]['bookmakers']
+            selected_bm = None
+            for preferred_id in [8, 1, 2, 6]:
+                for bm in bookmakers:
+                    if bm.get('id') == preferred_id:
+                        selected_bm = bm
+                        break
+                if selected_bm: break
+            
+            if not selected_bm:
+                selected_bm = bookmakers[0]
+
+            for bet in selected_bm.get('bets', []):
+                if bet.get('id') == 1 or bet.get('name') == 'Match Winner':
+                    val_map = {str(v.get('value')): float(v.get('odd')) for v in bet.get('values', [])}
+                    o1 = val_map.get('Home') or val_map.get('1')
+                    ox = val_map.get('Draw') or val_map.get('X')
+                    o2 = val_map.get('Away') or val_map.get('2')
+                    if o1 and ox and o2:
+                        return round(o1, 2), round(ox, 2), round(o2, 2)
     except Exception as e:
         print(f"Error fetching odds for fixture {fixture_id}:", e)
     return None, None, None
@@ -79,16 +89,15 @@ def fetch_live_games():
             except:
                 m_time = ""
 
-            # משיכת יחסי הימורים אמיתיים בלייב
             o1, ox, o2 = get_real_odds(f_id, headers)
+            # אם אין יחס אמיתי בסוכנויות, יוצר ברירת מחדל בולטת וברורה (9.99)
             if not o1:
-                # גיבוי במידה והסוכנויות טרם פתחו את הליין למשחק
-                o1, ox, o2 = 1.95, 3.25, 3.80
+                o1, ox, o2 = 9.99, 9.99, 9.99
 
             conn.execute("INSERT INTO games (id, team1, team2, logo1, logo2, odd_1, odd_x, odd_2, status, match_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)", 
                          (idx, t1, t2, l1, l2, o1, ox, o2, m_time))
         conn.commit()
-    return True, f"נטענו {len(final_fixtures)} משחקים עם יחסים אמיתיים מהסוכנויות!"
+    return True, f"נטענו {len(final_fixtures)} משחקים בהצלחה!"
 
 init_db()
 
@@ -111,192 +120,4 @@ input { padding: 8px; margin: 5px; border: 1px solid #ccc; border-radius: 5px; t
 .team-side.away { justify-content: flex-end; text-align: right; }
 .team-logo { width: 36px; height: 36px; object-fit: contain; }
 .vs-badge { font-weight: bold; color: #ff4757; padding: 0 8px; font-size: 14px; }
-.time-tag { font-size: 0.85em; color: #666; font-weight: bold; background: #f0f0f0; padding: 3px 8px; border-radius: 4px; display: inline-block; }
-.alert { background: #ff4757; color: white; padding: 10px; border-radius: 6px; margin: 10px auto; max-width: 480px; font-weight: bold; }
-.success { background: #2ed573; color: white; padding: 10px; border-radius: 6px; margin: 10px auto; max-width: 480px; font-weight: bold; }
-.status-won { color: #2ed573; font-weight: bold; }
-.status-lost { color: #ff4757; font-weight: bold; }
-.status-pending { color: #ffa500; font-weight: bold; }
-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-th, td { padding: 8px; border-bottom: 1px solid #eee; text-align: center; font-size: 14px; }
-</style>
-</head>
-<body>
-<h1>ווינר חברים ⚽</h1>
-{% if msg %}<div class="{{ msg_class }}">{{ msg }}</div>{% endif %}
-
-{% if not user %}
-<div class="card">
-  <h2>התחברות</h2>
-  <form method="POST" action="/login">
-    <input type="text" name="username" placeholder="שם משתמש" required><br>
-    <button type="submit">היכנס למשחק</button>
-  </form>
-</div>
-{% else %}
-<div class="nav">
-  <a href="/">משחקים</a>
-  <a href="/league">טבלה</a>
-  <a href="/history">היסטוריה</a>
-  <a href="/check_results" onclick="return confirm('להגריל תוצאות ולחלק זכיות?')">עדכן תוצאות</a>
-  <a href="/logout" style="background:#ff4757">יציאה</a>
-</div>
-<h3>שלום {{ user }} | יתרה: {{ balance }} ₪</h3>
-
-{% if view == 'games' %}
-  {% if not games %}
-    <div class="card"><h3>אין משחקים עתידיים פתוחים כרגע</h3></div>
-  {% endif %}
-  {% for g in games %}
-  <div class="card">
-    {% if g['match_time'] %}<div class="time-tag">📅 {{ g['match_time'] }}</div>{% endif %}
-    <div class="match-header">
-      <div class="team-side home">
-        <img src="{{ g['logo1'] }}" class="team-logo">
-        <span><b>{{ g['team1'] }}</b></span>
-      </div>
-      <div class="vs-badge">VS</div>
-      <div class="team-side away">
-        <span><b>{{ g['team2'] }}</b></span>
-        <img src="{{ g['logo2'] }}" class="team-logo">
-      </div>
-    </div>
-    <form method="POST" action="/bet">
-      <input type="hidden" name="game_id" value="{{ g['id'] }}">
-      <label><input type="radio" name="guess" value="1" required> 1 ({{ g['odd_1'] }})</label>
-      <label><input type="radio" name="guess" value="X"> X ({{ g['odd_x'] }})</label>
-      <label><input type="radio" name="guess" value="2"> 2 ({{ g['odd_2'] }})</label><br>
-      <input type="number" name="amount" placeholder="סכום (₪)" min="1" max="{{ balance }}" required>
-      <button type="submit">שלח הימור</button>
-    </form>
-  </div>
-  {% endfor %}
-{% elif view == 'league' %}
-  <div class="card">
-    <h2>טבלת הליגה 🏆</h2>
-    <table>
-      <tr><th>מיקום</th><th>שם</th><th>יתרה</th></tr>
-      {% for u in users_league %}
-      <tr><td>{{ loop.index }}</td><td>{{ u['name'] }}</td><td>{{ u['balance'] }} ₪</td></tr>
-      {% endfor %}
-    </table>
-  </div>
-{% elif view == 'history' %}
-  <div class="card">
-    <h2>ההימורים שלי 📜</h2>
-    {% if not user_bets %}<p>טרם ביצעת הימורים.</p>{% endif %}
-    {% for b in user_bets %}
-    <div style="border-bottom:1px solid #eee; padding:8px 0; text-align:right;">
-      <b>{{ b['team1'] }} vs {{ b['team2'] }}</b><br>
-      הימור: <b>{{ b['guess'] }}</b> | סכום: <b>{{ b['amount'] }} ₪</b> | סטטוס: 
-      <span class="status-{{ b['status'] }}">
-        {% if b['status'] == 'won' %}זכייה!🏆{% elif b['status'] == 'lost' %}הפסד❌{% else %}ממתין ⏳{% endif %}
-      </span>
-    </div>
-    {% endfor %}
-  </div>
-{% endif %}
-{% endif %}
-</body>
-</html>"""
-
-@app.route("/")
-def index():
-    user = session.get("user")
-    status_param = request.args.get("msg")
-    msg, msg_class = None, "alert"
-    if status_param == "already_bet": msg = "כבר הימרת על המשחק הזה!"
-    elif status_param == "no_balance": msg = "אין לך מספיק יתרה להימור זה!"
-    elif status_param == "bet_placed": msg, msg_class = "ההימור נרשם בהצלחה!", "success"
-    elif status_param == "results_checked": msg, msg_class = "תוצאות המשחקים עודכנו והיתרות חושבו!", "success"
-    
-    if not user: return render_template_string(HTML, user=None, msg=msg, msg_class=msg_class)
-    with get_db() as conn:
-        row = conn.execute("SELECT balance FROM users WHERE name = ?", (user,)).fetchone()
-        if not row: session.clear(); return redirect("/")
-        games = conn.execute("SELECT * FROM games WHERE status = 'open'").fetchall()
-        return render_template_string(HTML, user=user, balance=row["balance"], games=games, view='games', msg=msg, msg_class=msg_class)
-
-@app.route("/league")
-def league():
-    user = session.get("user")
-    if not user: return redirect("/")
-    with get_db() as conn:
-        balance = conn.execute("SELECT balance FROM users WHERE name = ?", (user,)).fetchone()["balance"]
-        users = conn.execute("SELECT name, balance FROM users ORDER BY balance DESC").fetchall()
-        return render_template_string(HTML, user=user, balance=balance, users_league=users, view='league')
-
-@app.route("/history")
-def history():
-    user = session.get("user")
-    if not user: return redirect("/")
-    with get_db() as conn:
-        balance = conn.execute("SELECT balance FROM users WHERE name = ?", (user,)).fetchone()["balance"]
-        bets = conn.execute("SELECT b.guess, b.amount, b.status, g.team1, g.team2 FROM bets b JOIN games g ON b.game_id = g.id WHERE b.user = ? ORDER BY b.id DESC", (user,)).fetchall()
-        return render_template_string(HTML, user=user, balance=balance, user_bets=bets, view='history')
-
-@app.route("/login", methods=["POST"])
-def login():
-    user = request.form.get("username", "").strip()
-    if user:
-        session["user"] = user
-        with get_db() as conn:
-            if not conn.execute("SELECT name FROM users WHERE name = ?", (user,)).fetchone():
-                conn.execute("INSERT INTO users (name, balance) VALUES (?, 1000)", (user,))
-                conn.commit()
-    return redirect("/")
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect("/")
-
-@app.route("/bet", methods=["POST"])
-def bet():
-    user = session.get("user")
-    try:
-        amount = int(request.form.get("amount", 0))
-        game_id = int(request.form.get("game_id"))
-    except:
-        return redirect("/")
-    guess = request.form.get("guess")
-    
-    if user and amount > 0:
-        with get_db() as conn:
-            if conn.execute("SELECT id FROM bets WHERE user = ? AND game_id = ?", (user, game_id)).fetchone():
-                return redirect("/?msg=already_bet")
-            row = conn.execute("SELECT balance FROM users WHERE name = ?", (user,)).fetchone()
-            if not row or row["balance"] < amount:
-                return redirect("/?msg=no_balance")
-            
-            conn.execute("UPDATE users SET balance = balance - ? WHERE name = ?", (amount, user))
-            conn.execute("INSERT INTO bets (user, game_id, guess, amount, timestamp, status) VALUES (?, ?, ?, ?, ?, 'pending')", 
-                         (user, game_id, guess, amount, datetime.now().strftime("%Y-%m-%d %H:%M")))
-            conn.commit()
-            return redirect("/?msg=bet_placed")
-    return redirect("/")
-
-@app.route("/check_results")
-def check_results():
-    with get_db() as conn:
-        open_games = conn.execute("SELECT id, odd_1, odd_x, odd_2 FROM games WHERE status = 'open'").fetchall()
-        for g in open_games:
-            import random
-            result = random.choice(['1', 'X', '2'])
-            conn.execute("UPDATE games SET status = 'closed', result = ? WHERE id = ?", (result, g['id']))
-            pending_bets = conn.execute("SELECT id, user, amount, guess FROM bets WHERE game_id = ? AND status = 'pending'", (g['id'],)).fetchall()
-            for b in pending_bets:
-                if str(b['guess']) == result:
-                    odd = g['odd_1'] if result == '1' else (g['odd_x'] if result == 'X' else g['odd_2'])
-                    win_amount = int(b['amount'] * odd)
-                    conn.execute("UPDATE users SET balance = balance + ? WHERE name = ?", (win_amount, b['user']))
-                    conn.execute("UPDATE bets SET status = 'won' WHERE id = ?", (b['id'],))
-                else:
-                    conn.execute("UPDATE bets SET status = 'lost' WHERE id = ?", (b['id'],))
-        conn.commit()
-    return redirect("/?msg=results_checked")
-
-@app.route("/update_live")
-def update_live():
-    success, msg = fetch_live_games()
-    return f"Status: {msg}", 200
+.time-tag { font-size: 0.8
