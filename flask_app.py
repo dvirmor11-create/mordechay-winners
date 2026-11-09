@@ -20,14 +20,24 @@ def init_db():
         conn.commit()
 
 def fetch_live_games():
-    if not API_KEY: return False
+    if not API_KEY: return False, "No API key"
+    
     url = "https://v3.football.api-sports.io/fixtures?next=15"
-    headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
+    headers = {
+        'x-apisports-key': API_KEY,
+        'x-rapidapi-key': API_KEY,
+        'x-rapidapi-host': "v3.football.api-sports.io"
+    }
     
     try:
         res = requests.get(url, headers=headers, timeout=10).json()
+        
+        if res.get('errors') and len(res['errors']) > 0:
+            return False, f"API Error: {res['errors']}"
+            
         fixtures = res.get('response', [])
-        if not fixtures: return False
+        if not fixtures:
+            return False, "API returned 0 fixtures"
 
         with get_db() as conn:
             conn.execute("DELETE FROM games WHERE status = 'open'")
@@ -37,10 +47,9 @@ def fetch_live_games():
                 o1, ox, o2 = round(random.uniform(1.4, 2.8), 2), round(random.uniform(2.8, 3.8), 2), round(random.uniform(1.8, 3.5), 2)
                 conn.execute("INSERT INTO games (id, team1, team2, logo1, logo2, odd_1, odd_x, odd_2, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')", (idx, t1, t2, l1, l2, o1, ox, o2))
             conn.commit()
-        return True
+        return True, f"Loaded {len(fixtures)} games successfully!"
     except Exception as e:
-        print(e)
-        return False
+        return False, f"Exception: {str(e)}"
 
 init_db()
 
@@ -170,5 +179,5 @@ def bet():
 
 @app.route("/update_live")
 def update_live():
-    success = fetch_live_games()
-    return f"Games updated. Success: {success}", 200
+    success, msg = fetch_live_games()
+    return f"Status: {msg}", 200
