@@ -2,11 +2,15 @@ from flask import Flask, request, render_template_string, session, redirect, url
 import sqlite3
 import os
 import random
+import requests
 from datetime import datetime
 
 app = Flask(__name__)
 app.secret_key = "secret_key_for_app_123"
 db_path = os.path.join(os.path.dirname(__file__), "database.db")
+
+# שים כאן את מפתח ה-API החינמי שלך מ- api-football.com כדי לשאוב נתונים בלייב
+API_KEY = "YOUR_API_KEY_HERE"
 
 def get_db():
     conn = sqlite3.connect(db_path)
@@ -26,23 +30,46 @@ def init_db():
 
 def generate_weekly_games(conn):
     conn.execute("DELETE FROM games WHERE status = 'open'")
+    
+    # רשימת גיבוי במקרה שאין עדיין מפתח API פעיל
     match_list = [
-        ("מכבי תל אביב", "מכבי חיפה", "https://media.api-sports.io/football/teams/739.png", "https://media.api-sports.io/football/teams/743.png"),
-        ("הפועל באר שבע", "בית\"ר ירושלים", "https://media.api-sports.io/football/teams/746.png", "https://media.api-sports.io/football/teams/740.png"),
-        ("הפועל תל אביב", "מכבי נתניה", "https://media.api-sports.io/football/teams/741.png", "https://media.api-sports.io/football/teams/747.png"),
-        ("הפועל חיפה", "בני סכנין", "https://media.api-sports.io/football/teams/742.png", "https://media.api-sports.io/football/teams/755.png"),
-        ("מנצ'סטר יונייטד", "ליברפול", "https://media.api-sports.io/football/teams/33.png", "https://media.api-sports.io/football/teams/40.png"),
-        ("ארסנל", "מנצ'סטר סיטי", "https://media.api-sports.io/football/teams/42.png", "https://media.api-sports.io/football/teams/50.png"),
-        ("ריאל מדריד", "ברצלונה", "https://media.api-sports.io/football/teams/541.png", "https://media.api-sports.io/football/teams/529.png"),
-        ("באיירן מינכן", "בורוסיה דורטמונד", "https://media.api-sports.io/football/teams/157.png", "https://media.api-sports.io/football/teams/165.png")
+        ("מכבי תל אביב", "מכבי חיפה", "https://media.api-sports.io/football/teams/739.png", "https://media.api-sports.io/football/teams/743.png", 1.85, 3.25, 3.80),
+        ("הפועל באר שבע", "בית\"ר ירושלים", "https://media.api-sports.io/football/teams/746.png", "https://media.api-sports.io/football/teams/740.png", 2.10, 3.10, 3.10),
+        ("הפועל תל אביב", "מכבי נתניה", "https://media.api-sports.io/football/teams/741.png", "https://media.api-sports.io/football/teams/747.png", 2.20, 3.00, 2.95),
+        ("הפועל חיפה", "בני סכנין", "https://media.api-sports.io/football/teams/742.png", "https://media.api-sports.io/football/teams/755.png", 2.05, 3.10, 3.20),
+        ("בני יהודה", "הפועל פתח תקווה", "https://media.api-sports.io/football/teams/745.png", "https://media.api-sports.io/football/teams/748.png", 2.40, 3.00, 2.60)
     ]
-    for idx, (t1, t2, l1, l2) in enumerate(match_list, start=1):
-        odd_1 = round(random.uniform(1.6, 2.8), 2)
-        odd_x = round(random.uniform(3.0, 3.6), 2)
-        odd_2 = round(random.uniform(2.0, 4.2), 2)
+    
+    for idx, (t1, t2, l1, l2, o1, ox, o2) in enumerate(match_list, start=1):
         conn.execute("INSERT OR REPLACE INTO games (id, team1, team2, logo1, logo2, odd_1, odd_x, odd_2, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')",
-                     (idx, t1, t2, l1, l2, odd_1, odd_x, odd_2))
+                     (idx, t1, t2, l1, l2, o1, ox, o2))
     conn.commit()
+
+def fetch_live_games():
+    if API_KEY == "YOUR_API_KEY_HERE":
+        return False # מדלג אם אין מפתח וממשיך להשתמש ברשימת הגיבוי
+    
+    url = "https://v3.football.api-sports.io/fixtures?league=390&season=2024&next=5" # 390 = ליגה לאומית / ליגת העל
+    headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
+    
+    try:
+        response = requests.get(url, headers=headers).json()
+        with get_db() as conn:
+            conn.execute("DELETE FROM games WHERE status = 'open'")
+            for idx, game in enumerate(response['response'], start=1):
+                t1 = game['teams']['home']['name']
+                t2 = game['teams']['away']['name']
+                l1 = game['teams']['home']['logo']
+                l2 = game['teams']['away']['logo']
+                # יחסים מדומים או משיכת יחסים מנקודת Odds ב-API (דורש קריאה נוספת)
+                o1, ox, o2 = round(random.uniform(1.8, 2.5), 2), round(random.uniform(2.8, 3.5), 2), round(random.uniform(2.0, 3.0), 2)
+                conn.execute("INSERT INTO games (id, team1, team2, logo1, logo2, odd_1, odd_x, odd_2, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')",
+                             (idx, t1, t2, l1, l2, o1, ox, o2))
+            conn.commit()
+        return True
+    except Exception as e:
+        print("Error fetching API:", e)
+        return False
 
 init_db()
 
@@ -75,11 +102,17 @@ HTML_TEMPLATE = """
         .status-won { color: green; font-weight: bold; }
         .status-lost { color: red; font-weight: bold; }
         .status-pending { color: orange; font-weight: bold; }
+        .alert { background-color: #ff4757; color: white; padding: 10px; border-radius: 8px; margin-bottom: 15px; font-weight: bold; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>ווינר חברים ⚽</h1>
+        
+        {% if error_msg %}
+            <div class="alert">{{ error_msg }}</div>
+        {% endif %}
+        
         {% if not user %}
             <div class="card">
                 <h2>התחברות</h2>
@@ -166,6 +199,9 @@ HTML_TEMPLATE = """
 @app.route("/")
 def index():
     user = session.get("user")
+    error = request.args.get("error")
+    error_msg = "כבר הימרת על המשחק הזה! לא ניתן להמר פעמיים." if error == "already_bet" else None
+    
     if not user: return render_template_string(HTML_TEMPLATE, user=None)
     
     with get_db() as conn:
@@ -175,7 +211,7 @@ def index():
             return redirect(url_for("index"))
         balance = user_row["balance"]
         games = conn.execute("SELECT * FROM games WHERE status = 'open'").fetchall()
-    return render_template_string(HTML_TEMPLATE, user=user, balance=balance, games=games, view='games')
+    return render_template_string(HTML_TEMPLATE, user=user, balance=balance, games=games, view='games', error_msg=error_msg)
 
 @app.route("/league")
 def league():
@@ -183,11 +219,7 @@ def league():
     if not user: return redirect(url_for("index"))
     
     with get_db() as conn:
-        user_row = conn.execute("SELECT balance FROM users WHERE name = ?", (user,)).fetchone()
-        if not user_row:
-            session.clear()
-            return redirect(url_for("index"))
-        balance = user_row["balance"]
+        balance = conn.execute("SELECT balance FROM users WHERE name = ?", (user,)).fetchone()["balance"]
         users_league = conn.execute("SELECT name, balance FROM users ORDER BY balance DESC").fetchall()
     return render_template_string(HTML_TEMPLATE, user=user, balance=balance, users_league=users_league, view='league')
 
@@ -197,11 +229,7 @@ def history():
     if not user: return redirect(url_for("index"))
     
     with get_db() as conn:
-        user_row = conn.execute("SELECT balance FROM users WHERE name = ?", (user,)).fetchone()
-        if not user_row:
-            session.clear()
-            return redirect(url_for("index"))
-        balance = user_row["balance"]
+        balance = conn.execute("SELECT balance FROM users WHERE name = ?", (user,)).fetchone()["balance"]
         query = """SELECT b.guess, b.amount, b.status, g.team1, g.team2 
                    FROM bets b JOIN games g ON b.game_id = g.id 
                    WHERE b.user = ? ORDER BY b.id DESC"""
@@ -234,6 +262,11 @@ def bet():
     
     if user and amount > 0:
         with get_db() as conn:
+            # תיקון הבאג: בדיקה אם המשתמש כבר הימר על המשחק הזה
+            existing_bet = conn.execute("SELECT id FROM bets WHERE user = ? AND game_id = ?", (user, game_id)).fetchone()
+            if existing_bet:
+                return redirect(url_for("index", error="already_bet"))
+            
             game = conn.execute("SELECT status FROM games WHERE id = ?", (game_id,)).fetchone()
             if game and game["status"] == 'open':
                 row = conn.execute("SELECT balance FROM users WHERE name = ?", (user,)).fetchone()
@@ -244,11 +277,14 @@ def bet():
                     conn.commit()
     return redirect(url_for("history"))
 
-@app.route("/update_weekly_games")
-def update_weekly_games():
-    with get_db() as conn:
-        generate_weekly_games(conn)
-    return "Games updated successfully", 200
+@app.route("/update_live")
+def update_live():
+    # כתובת לעדכון אוטומטי של המשחקים
+    success = fetch_live_games()
+    if not success:
+        with get_db() as conn:
+            generate_weekly_games(conn)
+    return "Games updated", 200
 
 @app.route("/check_results")
 def check_results():
