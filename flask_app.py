@@ -9,7 +9,7 @@ app = Flask(__name__)
 app.secret_key = "secret_key_for_app_123"
 db_path = os.path.join(os.path.dirname(__file__), "database.db")
 
-# מפתח ה-API המעודכן שלך
+# מפתח ה-API האישי שלך
 API_KEY = "e82bd0d32359350788242541846dc07a"
 
 def get_db():
@@ -51,7 +51,7 @@ def fetch_live_games():
     today = datetime.now().strftime("%Y-%m-%d")
     next_week = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
     
-    # שאיבת משחקים לשבוע הקרוב מליגה לאומית (390)
+    # שאיבת משחקים מליגה לאומית (390) מ-היום ועד 7 ימים קדימה
     url = f"https://v3.football.api-sports.io/fixtures?league=390&season=2026&from={today}&to={next_week}"
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
     
@@ -59,7 +59,7 @@ def fetch_live_games():
         response = requests.get(url, headers=headers).json()
         fixtures = response.get('response', [])
         
-        # גיבוי: במידה ואין משחקים בשבעת הימים הקרובים, משוך את 10 המשחקים הקרובים בליגה
+        # אם אין משחקים בשבעת הימים הקרובים, משוך את 10 המשחקים הקרובים בליגה
         if not fixtures:
             url_next = "https://v3.football.api-sports.io/fixtures?league=390&season=2026&next=10"
             response = requests.get(url_next, headers=headers).json()
@@ -86,8 +86,7 @@ def fetch_live_games():
 
 init_db()
 
-HTML_TEMPLATE = """
-<!DOCTYPE html>
+HTML_TEMPLATE = """<!DOCTYPE html>
 <html dir="rtl" lang="he">
 <head>
     <meta charset="utf-8">
@@ -106,14 +105,3 @@ HTML_TEMPLATE = """
         table { width: 100%; border-collapse: collapse; margin-top: 10px; color: #333; }
         th, td { padding: 10px; border-bottom: 1px solid #ddd; text-align: center; }
         .team-logo { width: 50px; height: 50px; object-fit: contain; }
-        .match-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; font-weight: bold; }
-        .match-header div { flex: 1; }
-        .odds-selector { display: flex; justify-content: space-between; margin-bottom: 10px; }
-        .odds-selector input[type="radio"] { display: none; }
-        .odds-selector label { flex: 1; margin: 0 5px; padding: 10px; background: #e0e0e0; border-radius: 8px; cursor: pointer; font-weight: bold; border: 2px solid transparent; transition: 0.2s; color: #333; }
-        .odds-selector input[type="radio"]:checked + label { background: #ff4757; color: white; border-color: #ff4757; }
-        .status-won { color: green; font-weight: bold; }
-        .status-lost { color: red; font-weight: bold; }
-        .status-pending { color: orange; font-weight: bold; }
-        .alert { background-color: #ff4757; color: white; padding: 10px; border-radius: 8px; margin-bottom: 15px; font-weight: bold; }
-    </style
