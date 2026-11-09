@@ -85,8 +85,8 @@ def fetch_live_games():
     headers = {'x-apisports-key': API_KEY, 'x-rapidapi-key': API_KEY, 'x-rapidapi-host': "v3.football.api-sports.io"}
     
     raw_fixtures = []
-    # סריקה רחבה יותר: מ-2 ימים אחורה ועד 5 ימים קדימה כדי לתפוס את כל משחקי המחזור
-    for day_offset in range(-2, 6):
+    # סריקת משחקים מהיום ועד 7 ימים קדימה (שבוע מהיום)
+    for day_offset in range(0, 8):
         target_date = (datetime.now() + timedelta(days=day_offset)).strftime("%Y-%m-%d")
         url = f"https://v3.football.api-sports.io/fixtures?date={target_date}"
         try:
@@ -96,12 +96,16 @@ def fetch_live_games():
         except Exception as e:
             print(e)
 
+    # סינון לפי ליגות מאושרות
     filtered_fixtures = [g for g in raw_fixtures if g.get('league', {}).get('id') in ALLOWED_LEAGUES]
-    filtered_fixtures.sort(key=lambda g: ALLOWED_LEAGUES.index(g['league']['id']))
-    final_fixtures = filtered_fixtures[:12]
+    # מיון לפי עדיפות הליגה, ואז לפי תאריך המשחק
+    filtered_fixtures.sort(key=lambda g: (ALLOWED_LEAGUES.index(g['league']['id']), g['fixture']['timestamp']))
+    
+    # הגדלנו ל-15 משחקים כדי להכיל משחקים רחוקים יותר מאותו שבוע
+    final_fixtures = filtered_fixtures[:15]
 
     if not final_fixtures:
-        return False, "לא נמצאו משחקים בליגות המבוקשות בטווח התאריכים"
+        return False, "לא נמצאו משחקים בליגות המבוקשות בשבוע הקרוב"
 
     with get_db() as conn:
         conn.execute("DELETE FROM games WHERE status = 'open'")
@@ -125,7 +129,7 @@ def fetch_live_games():
             conn.execute("INSERT INTO games (id, team1, team2, logo1, logo2, odd_1, odd_x, odd_2, status, match_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)", 
                          (idx, t1, t2, l1, l2, o1, ox, o2, m_time))
         conn.commit()
-    return True, f"נטענו {len(final_fixtures)} משחקים בהצלחה!"
+    return True, f"נטענו {len(final_fixtures)} משחקים לשבוע הקרוב בהצלחה!"
 
 init_db()
 
