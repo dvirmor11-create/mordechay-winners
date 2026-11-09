@@ -1,5 +1,5 @@
 from flask import Flask, request, render_template_string, session, redirect, url_for
-import sqlite3, os, requests
+import sqlite3, os, requests, re
 from datetime import datetime, timedelta, timezone
 
 app = Flask(__name__)
@@ -7,11 +7,40 @@ app.secret_key = "secret_key_123"
 db_path = os.path.join(os.path.dirname(__file__), "database.db")
 API_KEY = "e82bd0d32359350788242541846dc07a"
 
-# רשימת הליגות המאושרות בלבד:
-# 383: ליגת העל | 390: הליגה הלאומית
-# 140: לה ליגה (ספרד) | 39: פרמייר ליג (אנגליה)
-# 5: ליגת האומות | 2: ליגת האלופות | 3: הליגה האירופית | 848: קונפרנס ליג
+# 383: ליגת העל | 390: הליגה הלאומית | 140: לה ליגה | 39: פרמייר ליג | 5: ליגת האומות | 2: צ'מפיונס | 3: אירופית | 848: קונפרנס
 ALLOWED_LEAGUES = [383, 390, 140, 39, 5, 2, 3, 848]
+
+# מילון תרגום שמות קבוצות מאנגלית לעברית
+TRANSLATIONS_MAP = {
+    # ליגות בישראל
+    "Maccabi Tel Aviv": "מכבי תל אביב", "Maccabi Haifa": "מכבי חיפה", "Hapoel Beer Sheva": "הפועל באר שבע",
+    "Beitar Jerusalem": "בית\"ר ירושלים", "Hapoel Tel Aviv": "הפועל תל אביב", "Maccabi Netanya": "מכבי נתניה",
+    "Hapoel Haifa": "הפועל חיפה", "Bnei Sakhnin": "בני סכנין", "Hapoel Jerusalem": "הפועל ירושלים",
+    "Maccabi Bnei Raina": "מכבי בני ריינה", "Hapoel Hadera": "הפועל חדרה", "Ironi Kiryat Shmona": "עירוני קריית שמונה",
+    "Maccabi Petah Tikva": "מכבי פתח תקווה", "F.C. Ashdod": "מ.ס. אשדוד", "Hapoel Petah Tikva": "הפועל פתח תקווה",
+    "Bnei Yehuda": "בני יהודה", "Hapoel Kfar Saba": "הפועל כפר סבא", "Hapoel Ramat Gan": "הפועל רמת גן",
+    "Hapoel Rishon LeZion": "הפועל ראשון לציון", "Hapoel Afula": "הפועל עפולה", "Hapoel Umm al-Fahm": "הפועל אום אל-פחם",
+    "Maccabi Jaffa": "מכבי יפו", "Hapoel Nir Ramat HaSharon": "הפועל רמת השרון", "Ironi Tiberias": "עירוני טבריה",
+    "Maccabi Herzliya": "מכבי הרצליה", "Sektzia Nes Tziona": "סקציית נס ציונה", "Hapoel Nof HaGalil": "הפועל נוף הגליל",
+    
+    # אנגליה & ספרד
+    "Real Madrid": "ריאל מדריד", "Barcelona": "ברצלונה", "Atletico Madrid": "אתלטיקו מדריד", "Sevilla": "סביליה",
+    "Villarreal": "ויאריאל", "Real Sociedad": "ריאל סוסיאדד", "Girona": "ג'ירונה", "Real Betis": "ריאל בטיס",
+    "Arsenal": "ארסנל", "Manchester City": "מנצ'סטר סיטי", "Liverpool": "ליברפול", "Chelsea": "צ'לסי",
+    "Tottenham": "טוטנהאם", "Manchester United": "מנצ'סטר יונייטד", "Aston Villa": "אסטון וילה", "Newcastle": "ניוקאסל",
+    
+    # נבחרות (ליגת האומות)
+    "Israel": "ישראל", "France": "צרפת", "Italy": "איטליה", "Belgium": "בלגיה", "Spain": "ספרד",
+    "England": "אנגליה", "Germany": "גרמניה", "Portugal": "פורטוגל", "Netherlands": "הולנד", "Croatia": "קרואטיה"
+}
+
+def translate_team(team_name):
+    """מתרגם את שם הקבוצה לעברית במידה וקיים במילון"""
+    if team_name in TRANSLATIONS_MAP:
+        return TRANSLATIONS_MAP[team_name]
+    # תרגום בסיסי למקרים ששם הקבוצה מכיל סיומות נפוצות
+    clean_name = re.sub(r'\b(FC|F\.C\.|Club|Town|City|United)\b', '', team_name, flags=re.IGNORECASE).strip()
+    return TRANSLATIONS_MAP.get(clean_name, team_name)
 
 def get_db():
     conn = sqlite3.connect(db_path)
@@ -70,10 +99,7 @@ def fetch_live_games():
         except Exception as e:
             print(e)
 
-    # סינון קשיח: שומר רק משחקים מהליגות המאושרות (ישראל, ספרד, אנגליה, אירופה)
     filtered_fixtures = [g for g in raw_fixtures if g.get('league', {}).get('id') in ALLOWED_LEAGUES]
-    
-    # מיון לפי סדר העדיפות שנקבע ברשימה
     filtered_fixtures.sort(key=lambda g: ALLOWED_LEAGUES.index(g['league']['id']))
     final_fixtures = filtered_fixtures[:10]
 
@@ -84,7 +110,9 @@ def fetch_live_games():
         conn.execute("DELETE FROM games WHERE status = 'open'")
         for idx, g in enumerate(final_fixtures, start=1):
             f_id = g['fixture']['id']
-            t1, t2 = g['teams']['home']['name'], g['teams']['away']['name']
+            # תרגום שמות הקבוצות לעברית
+            t1 = translate_team(g['teams']['home']['name'])
+            t2 = translate_team(g['teams']['away']['name'])
             l1, l2 = g['teams']['home']['logo'], g['teams']['away']['logo']
             
             raw_date = g['fixture'].get('date', '')
@@ -95,14 +123,13 @@ def fetch_live_games():
                 m_time = ""
 
             o1, ox, o2 = get_real_odds(f_id, headers)
-            # ברירת מחדל ברורה ומובהקת במקרה שאין ליין רשמי (9.99)
             if not o1:
                 o1, ox, o2 = 9.99, 9.99, 9.99
 
             conn.execute("INSERT INTO games (id, team1, team2, logo1, logo2, odd_1, odd_x, odd_2, status, match_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)", 
                          (idx, t1, t2, l1, l2, o1, ox, o2, m_time))
         conn.commit()
-    return True, f"נטענו {len(final_fixtures)} משחקים מהליגות המבוקשות בהצלחה!"
+    return True, f"נטענו {len(final_fixtures)} משחקים מתורגמים לעברית בהצלחה!"
 
 init_db()
 
