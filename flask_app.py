@@ -81,7 +81,6 @@ def fetch_live_games():
         except Exception as e:
             print(f"Request failed: {e}")
 
-    # בדיקה האם ה-API חסם אותנו בגלל מגבלת 100 פניות
     if api_errors and not raw_fixtures:
         return False, f"חסימת API (כנראה נגמרה המכסה היומית): {api_errors[0]}"
 
@@ -90,7 +89,7 @@ def fetch_live_games():
     final_fixtures = filtered_fixtures[:15]
 
     if not final_fixtures:
-        return False, "לא נמצאו משחקים בליגות המבוקשות בשבוע הקרוב (או שהמשחקים סוננו)"
+        return False, "לא נמצאו משחקים בליגות המבוקשות בשבוע הקרוב"
 
     with get_db() as conn:
         conn.execute("DELETE FROM games WHERE status = 'open'")
@@ -119,56 +118,73 @@ HTML = """<!DOCTYPE html>
 <html dir="rtl" lang="he">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ווינר חברים ⚽</title>
+<title>מרדכי ווינרים 🏆</title>
 <style>
-body { font-family: system-ui, -apple-system, sans-serif; text-align: center; background: #1e3c72; color: #fff; padding: 10px; margin: 0; }
-.card { background: #fff; color: #333; padding: 15px; margin: 12px auto; max-width: 480px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
-button { background: #ff4757; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 8px; font-size: 15px; }
-button:hover { background: #e03847; }
-input { padding: 8px; margin: 5px; border: 1px solid #ccc; border-radius: 5px; text-align: center; }
-.nav { margin-bottom: 15px; }
-.nav a { color: #fff; margin: 0 4px; font-weight: bold; text-decoration: none; background: rgba(255,255,255,0.15); padding: 6px 10px; border-radius: 20px; font-size: 13px; display: inline-block; margin-top:4px; }
-.match-header { display: flex; align-items: center; justify-content: space-between; direction: ltr; margin: 10px 0; }
-.team-side { display: flex; align-items: center; gap: 6px; flex: 1; }
+@import url('https://fonts.googleapis.com/css2?family=Rubik:wght@400;600;800&display=swap');
+body { font-family: 'Rubik', sans-serif; text-align: center; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); color: #fff; padding: 20px 10px; margin: 0; min-height: 100vh; }
+h1 { font-size: 2.8em; font-weight: 800; text-shadow: 2px 4px 6px rgba(0,0,0,0.4); margin-bottom: 25px; letter-spacing: 1px; color: #f1c40f; }
+h2, h3 { text-shadow: 1px 2px 3px rgba(0,0,0,0.3); }
+.card { background: rgba(255, 255, 255, 0.97); color: #2d3436; padding: 22px; margin: 15px auto; max-width: 480px; border-radius: 20px; box-shadow: 0 10px 20px rgba(0,0,0,0.2); transition: transform 0.2s, box-shadow 0.2s; border-top: 5px solid #e74c3c; }
+.card:hover { transform: translateY(-5px); box-shadow: 0 15px 25px rgba(0,0,0,0.3); }
+.nav { margin-bottom: 25px; display: flex; justify-content: center; flex-wrap: wrap; gap: 12px; }
+.nav a { color: #fff; font-weight: 600; text-decoration: none; background: rgba(255,255,255,0.15); padding: 10px 18px; border-radius: 30px; font-size: 15px; transition: 0.3s; backdrop-filter: blur(5px); border: 1px solid rgba(255,255,255,0.2); }
+.nav a:hover { background: rgba(255,255,255,0.3); transform: scale(1.05); }
+.nav a.logout { background: #e74c3c; border: none; }
+.nav a.logout:hover { background: #c0392b; }
+.match-header { display: flex; align-items: center; justify-content: space-between; direction: ltr; margin: 18px 0; background: #f8f9fa; padding: 12px; border-radius: 15px; border: 1px solid #eee; }
+.team-side { display: flex; align-items: center; gap: 8px; flex: 1; font-weight: 600; font-size: 1.1em; }
 .team-side.home { justify-content: flex-start; text-align: left; }
 .team-side.away { justify-content: flex-end; text-align: right; }
-.team-logo { width: 36px; height: 36px; object-fit: contain; }
-.vs-badge { font-weight: bold; color: #ff4757; padding: 0 8px; font-size: 14px; }
-.time-tag { font-size: 0.85em; color: #666; font-weight: bold; background: #f0f0f0; padding: 3px 8px; border-radius: 4px; display: inline-block; }
-.alert { background: #ff4757; color: white; padding: 10px; border-radius: 6px; margin: 10px auto; max-width: 480px; font-weight: bold; }
-.success { background: #2ed573; color: white; padding: 10px; border-radius: 6px; margin: 10px auto; max-width: 480px; font-weight: bold; }
-.status-won { color: #2ed573; font-weight: bold; }
-.status-lost { color: #ff4757; font-weight: bold; }
-.status-pending { color: #ffa500; font-weight: bold; }
-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-th, td { padding: 8px; border-bottom: 1px solid #eee; text-align: center; font-size: 14px; }
+.team-logo { width: 42px; height: 42px; object-fit: contain; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.15)); }
+.vs-badge { font-weight: 800; color: #fff; background: linear-gradient(45deg, #2d3436, #636e72); padding: 5px 12px; border-radius: 10px; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+.time-tag { font-size: 0.9em; color: #fff; font-weight: 600; background: #27ae60; padding: 5px 12px; border-radius: 20px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 10px; }
+.odds-container { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 15px; direction: ltr; }
+.odds-wrapper { flex: 1; position: relative; }
+.odds-wrapper input[type="radio"] { display: none; }
+.odds-label { display: block; background: #f1f2f6; padding: 12px 5px; border-radius: 12px; cursor: pointer; font-weight: 800; color: #2d3436; border: 2px solid transparent; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+.odds-label span { font-size: 0.85em; font-weight: 600; color: #636e72; display: block; margin-top: 4px; }
+.odds-wrapper input[type="radio"]:checked + .odds-label { border-color: #e74c3c; background: #ffeaa7; color: #d35400; transform: scale(1.02); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+.odds-wrapper input[type="radio"]:checked + .odds-label span { color: #d35400; }
+input[type="number"], input[type="text"] { padding: 12px; margin: 10px 0; border: 2px solid #dfe6e9; border-radius: 10px; text-align: center; font-size: 16px; width: 100%; box-sizing: border-box; transition: 0.3s; font-family: inherit; font-weight: 600; }
+input[type="number"]:focus, input[type="text"]:focus { border-color: #3498db; outline: none; box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.2); }
+button[type="submit"] { background: linear-gradient(45deg, #e74c3c, #ff7675); color: white; border: none; padding: 14px 20px; border-radius: 12px; cursor: pointer; font-weight: 800; width: 100%; font-size: 18px; box-shadow: 0 4px 15px rgba(231, 76, 60, 0.4); transition: 0.3s; font-family: inherit; }
+button[type="submit"]:hover { background: linear-gradient(45deg, #c0392b, #e74c3c); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(231, 76, 60, 0.6); }
+.alert { background: #e74c3c; color: white; padding: 12px; border-radius: 10px; margin: 15px auto; max-width: 480px; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+.success { background: #2ecc71; color: white; padding: 12px; border-radius: 10px; margin: 15px auto; max-width: 480px; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+.status-won { color: #2ecc71; font-weight: bold; }
+.status-lost { color: #e74c3c; font-weight: bold; }
+.status-pending { color: #f39c12; font-weight: bold; }
+table { width: 100%; border-collapse: separate; border-spacing: 0; margin-top: 15px; border-radius: 10px; overflow: hidden; }
+th { background: #2d3436; color: white; padding: 12px; font-weight: 600; }
+td { padding: 12px; border-bottom: 1px solid #ecf0f1; font-weight: 600; }
+tr:last-child td { border-bottom: none; }
 </style>
 </head>
 <body>
-<h1>ווינר חברים ⚽</h1>
+<h1>מרדכי ווינרים 🏆</h1>
 {% if msg %}<div class="{{ msg_class }}">{{ msg }}</div>{% endif %}
 
 {% if not user %}
 <div class="card">
-  <h2>התחברות</h2>
+  <h2>התחברות לחשבון</h2>
   <form method="POST" action="/login">
-    <input type="text" name="username" placeholder="שם משתמש" required><br>
-    <button type="submit">היכנס למשחק</button>
+    <input type="text" name="username" placeholder="הזן שם משתמש" required>
+    <button type="submit">היכנס למשחק 🚀</button>
   </form>
 </div>
 {% else %}
 <div class="nav">
-  <a href="/">משחקים</a>
-  <a href="/league">טבלה</a>
-  <a href="/history">היסטוריה</a>
-  <a href="/check_results" onclick="return confirm('להגריל תוצאות ולחלק זכיות?')">עדכן תוצאות</a>
-  <a href="/logout" style="background:#ff4757">יציאה</a>
+  <a href="/">משחקים ⚽</a>
+  <a href="/league">טבלת מובילים 🏆</a>
+  <a href="/history">היסטוריה 📜</a>
+  <a href="/check_results" onclick="return confirm('להגריל תוצאות ולחלק זכיות?')">עדכן תוצאות 🔄</a>
+  <a href="/logout" class="logout">יציאה 👋</a>
 </div>
-<h3>שלום {{ user }} | יתרה: {{ balance }} ₪</h3>
+<h3>שלום {{ user }} | יתרה פנויה: ₪{{ balance }} 💰</h3>
 
 {% if view == 'games' %}
   {% if not games %}
-    <div class="card"><h3>אין משחקים פתוחים כרגע</h3></div>
+    <div class="card"><h3>אין משחקים פתוחים כרגע 😴</h3></div>
   {% endif %}
   {% for g in games %}
   <div class="card">
@@ -176,21 +192,32 @@ th, td { padding: 8px; border-bottom: 1px solid #eee; text-align: center; font-s
     <div class="match-header">
       <div class="team-side home">
         <img src="{{ g['logo1'] }}" class="team-logo">
-        <span><b>{{ g['team1'] }}</b></span>
+        <span>{{ g['team1'] }}</span>
       </div>
       <div class="vs-badge">VS</div>
       <div class="team-side away">
-        <span><b>{{ g['team2'] }}</b></span>
+        <span>{{ g['team2'] }}</span>
         <img src="{{ g['logo2'] }}" class="team-logo">
       </div>
     </div>
     <form method="POST" action="/bet">
       <input type="hidden" name="game_id" value="{{ g['id'] }}">
-      <label><input type="radio" name="guess" value="1" required> 1 ({{ g['odd_1'] }})</label>
-      <label><input type="radio" name="guess" value="X"> X ({{ g['odd_x'] }})</label>
-      <label><input type="radio" name="guess" value="2"> 2 ({{ g['odd_2'] }})</label><br>
-      <input type="number" name="amount" placeholder="סכום (₪)" min="1" max="{{ balance }}" required>
-      <button type="submit">שלח הימור</button>
+      <div class="odds-container">
+        <label class="odds-wrapper">
+          <input type="radio" name="guess" value="1" required>
+          <div class="odds-label">1<span>יחס: {{ g['odd_1'] }}</span></div>
+        </label>
+        <label class="odds-wrapper">
+          <input type="radio" name="guess" value="X">
+          <div class="odds-label">X<span>יחס: {{ g['odd_x'] }}</span></div>
+        </label>
+        <label class="odds-wrapper">
+          <input type="radio" name="guess" value="2">
+          <div class="odds-label">2<span>יחס: {{ g['odd_2'] }}</span></div>
+        </label>
+      </div>
+      <input type="number" name="amount" placeholder="סכום הימור (₪)" min="1" max="{{ balance }}" required>
+      <button type="submit">שלח הימור ✔️</button>
     </form>
   </div>
   {% endfor %}
@@ -198,9 +225,9 @@ th, td { padding: 8px; border-bottom: 1px solid #eee; text-align: center; font-s
   <div class="card">
     <h2>טבלת הליגה 🏆</h2>
     <table>
-      <tr><th>מיקום</th><th>שם</th><th>יתרה</th></tr>
+      <tr><th>מיקום</th><th>שחקן</th><th>יתרה (₪)</th></tr>
       {% for u in users_league %}
-      <tr><td>{{ loop.index }}</td><td>{{ u['name'] }}</td><td>{{ u['balance'] }} ₪</td></tr>
+      <tr><td>#{{ loop.index }}</td><td>{{ u['name'] }}</td><td>{{ u['balance'] }}</td></tr>
       {% endfor %}
     </table>
   </div>
@@ -209,11 +236,12 @@ th, td { padding: 8px; border-bottom: 1px solid #eee; text-align: center; font-s
     <h2>ההימורים שלי 📜</h2>
     {% if not user_bets %}<p>טרם ביצעת הימורים.</p>{% endif %}
     {% for b in user_bets %}
-    <div style="border-bottom:1px solid #eee; padding:8px 0; text-align:right;">
-      <b>{{ b['team1'] }} vs {{ b['team2'] }}</b><br>
-      הימור: <b>{{ b['guess'] }}</b> | סכום: <b>{{ b['amount'] }} ₪</b> | סטטוס: 
+    <div style="border-bottom:1px solid #eee; padding:12px 0; text-align:right;">
+      <div style="font-weight:800; font-size:1.1em; margin-bottom:5px;">{{ b['team1'] }} 🆚 {{ b['team2'] }}</div>
+      סימון: <b>{{ b['guess'] }}</b> | סכום: <b>₪{{ b['amount'] }}</b><br>
+      סטטוס: 
       <span class="status-{{ b['status'] }}">
-        {% if b['status'] == 'won' %}זכייה!🏆{% elif b['status'] == 'lost' %}הפסד❌{% else %}ממתין ⏳{% endif %}
+        {% if b['status'] == 'won' %}זכייה! 💸{% elif b['status'] == 'lost' %}הפסד ❌{% else %}ממתין לתוצאה ⏳{% endif %}
       </span>
     </div>
     {% endfor %}
@@ -228,10 +256,10 @@ def index():
     user = session.get("user")
     status_param = request.args.get("msg")
     msg, msg_class = None, "alert"
-    if status_param == "already_bet": msg = "כבר הימרת על המשחק הזה!"
-    elif status_param == "no_balance": msg = "אין לך מספיק יתרה להימור זה!"
-    elif status_param == "bet_placed": msg, msg_class = "ההימור נרשם בהצלחה!", "success"
-    elif status_param == "results_checked": msg, msg_class = "תוצאות המשחקים עודכנו והיתרות חושבו!", "success"
+    if status_param == "already_bet": msg = "כבר הימרת על משחק זה! לא ניתן להמר פעמיים."
+    elif status_param == "no_balance": msg = "אין לך מספיק יתרה בחשבון להימור זה!"
+    elif status_param == "bet_placed": msg, msg_class = "ההימור נשלח בהצלחה! בהצלחה!", "success"
+    elif status_param == "results_checked": msg, msg_class = "תוצאות המשחקים עודכנו והזכיות חולקו!", "success"
     
     if not user: return render_template_string(HTML, user=None, msg=msg, msg_class=msg_class)
     with get_db() as conn:
