@@ -1,11 +1,20 @@
 from flask import Flask, request, render_template_string, session, redirect, url_for
 import sqlite3, os, random, requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 app = Flask(__name__)
 app.secret_key = "secret_key_123"
 db_path = os.path.join(os.path.dirname(__file__), "database.db")
 API_KEY = "e82bd0d32359350788242541846dc07a"
+
+REALISTIC_ODDS_POOL = [
+    (1.45, 4.20, 6.50), (1.65, 3.75, 4.80), (1.85, 3.40, 3.90),
+    (2.10, 3.20, 3.30), (2.35, 3.10, 2.85), (2.70, 3.25, 2.45),
+    (3.50, 3.40, 1.95), (4.50, 3.80, 1.65)
+]
+
+# מזהי ליגות בסדר עדיפות: 5 = ליגת האומות, 383 = ליגת העל, 390 = לאומית, 2 = צ'מפיונס, 39 = פרמייר ליג, 140 = לה ליגה
+PREFERRED_LEAGUES = [5, 383, 390, 2, 39, 140, 135, 78, 61]
 
 def get_db():
     conn = sqlite3.connect(db_path)
@@ -15,45 +24,51 @@ def get_db():
 def init_db():
     with get_db() as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS users (name TEXT PRIMARY KEY, balance INTEGER)")
-        conn.execute("CREATE TABLE IF NOT EXISTS games (id INTEGER PRIMARY KEY, team1 TEXT, team2 TEXT, logo1 TEXT, logo2 TEXT, odd_1 REAL, odd_x REAL, odd_2 REAL, status TEXT DEFAULT 'open', result TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS games (id INTEGER PRIMARY KEY, team1 TEXT, team2 TEXT, logo1 TEXT, logo2 TEXT, odd_1 REAL, odd_x REAL, odd_2 REAL, status TEXT DEFAULT 'open', result TEXT, match_time TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS bets (id INTEGER PRIMARY KEY AUTOINCREMENT, user TEXT, game_id INTEGER, guess TEXT, amount INTEGER, timestamp TEXT, status TEXT DEFAULT 'pending')")
         conn.commit()
 
 def fetch_live_games():
-    if not API_KEY: return False, "No API key"
+    if not API_KEY: return False, "חסר מפתח API"
+    headers = {'x-apisports-key': API_KEY, 'x-rapidapi-key': API_KEY, 'x-rapidapi-host': "v3.football.api-sports.io"}
     
-    headers = {
-        'x-apisports-key': API_KEY,
-        'x-rapidapi-key': API_KEY,
-        'x-rapidapi-host': "v3.football.api-sports.io"
-    }
-    
-    fixtures = []
-    # שאיבת משחקים לפי תאריכים מותאמת למסלול החינמי (ללא פרמטר next)
+    raw_fixtures = []
     for day_offset in range(0, 5):
         target_date = (datetime.now() + timedelta(days=day_offset)).strftime("%Y-%m-%d")
-        url = f"https://v3.football.api-sports.io/fixtures?date={target_date}"
+        url = f"https://v3.football.api-sports.io/fixtures?date={target_date}&status=NS"
         try:
             res = requests.get(url, headers=headers, timeout=5).json()
             if res.get('response'):
-                fixtures.extend(res['response'])
-            if len(fixtures) >= 15:
-                break
+                raw_fixtures.extend(res['response'])
         except Exception as e:
             print(e)
 
-    if not fixtures:
-        return False, "No fixtures found for upcoming days"
+    if not raw_fixtures:
+        return False, "לא נמצאו משחקים עתידיים בימים הקרובים"
+
+    # מיון וסינון: תעדוף ליגת האומות וליגות בכירות
+    top_fixtures = [g for g in raw_fixtures if g.get('league', {}).get('id') in PREFERRED_LEAGUES]
+    other_fixtures = [g for g in raw_fixtures if g.get('league', {}).get('id') not in PREFERRED_LEAGUES]
+    
+    top_fixtures.sort(key=lambda g: PREFERRED_LEAGUES.index(g['league']['id']))
+    final_fixtures = (top_fixtures + other_fixtures)[:15]
 
     with get_db() as conn:
         conn.execute("DELETE FROM games WHERE status = 'open'")
-        for idx, g in enumerate(fixtures[:15], start=1):
+        for idx, g in enumerate(final_fixtures, start=1):
             t1, t2 = g['teams']['home']['name'], g['teams']['away']['name']
             l1, l2 = g['teams']['home']['logo'], g['teams']['away']['logo']
-            o1, ox, o2 = round(random.uniform(1.4, 2.8), 2), round(random.uniform(2.8, 3.8), 2), round(random.uniform(1.8, 3.5), 2)
-            conn.execute("INSERT INTO games (id, team1, team2, logo1, logo2, odd_1, odd_x, odd_2, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')", (idx, t1, t2, l1, l2, o1, ox, o2))
+            raw_date = g['fixture'].get('date', '')
+            try:
+                dt = datetime.fromisoformat(raw_date.replace('Z', '+00:00')).astimezone(timezone(timedelta(hours=2)))
+                m_time = dt.strftime("%d/%m ב-%H:%M")
+            except:
+                m_time = ""
+            o1, ox, o2 = random.choice(REALISTIC_ODDS_POOL)
+            conn.execute("INSERT INTO games (id, team1, team2, logo1, logo2, odd_1, odd_x, odd_2, status, match_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)", 
+                         (idx, t1, t2, l1, l2, o1, ox, o2, m_time))
         conn.commit()
-    return True, f"Loaded {len(fixtures[:15])} games successfully!"
+    return True, f"נטענו {len(final_fixtures)} משחקים בהצלחה (כולל עדיפות לליגת האומות)!"
 
 init_db()
 
@@ -61,60 +76,104 @@ HTML = """<!DOCTYPE html>
 <html dir="rtl" lang="he">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ווינר חברים</title>
+<title>ווינר חברים ⚽</title>
 <style>
-body { font-family: sans-serif; text-align: center; background: #1e3c72; color: #fff; padding: 10px; }
-.card { background: #fff; color: #333; padding: 15px; margin: 10px auto; max-width: 500px; border-radius: 8px; }
-button { background: #ff4757; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 5px; }
-input { padding: 8px; margin: 5px; border: 1px solid #ccc; border-radius: 5px; }
-.nav a { color: white; margin: 0 10px; font-weight: bold; text-decoration: none; }
-.team-logo { width: 35px; height: 35px; vertical-align: middle; margin: 0 5px; }
-.alert { background: #ff4757; color: white; padding: 10px; border-radius: 5px; margin: 10px; }
+body { font-family: system-ui, -apple-system, sans-serif; text-align: center; background: #1e3c72; color: #fff; padding: 10px; margin: 0; }
+.card { background: #fff; color: #333; padding: 15px; margin: 12px auto; max-width: 480px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
+button { background: #ff4757; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 8px; font-size: 15px; }
+button:hover { background: #e03847; }
+input { padding: 8px; margin: 5px; border: 1px solid #ccc; border-radius: 5px; text-align: center; }
+.nav { margin-bottom: 15px; }
+.nav a { color: #fff; margin: 0 4px; font-weight: bold; text-decoration: none; background: rgba(255,255,255,0.15); padding: 6px 10px; border-radius: 20px; font-size: 13px; display: inline-block; margin-top:4px; }
+.match-header { display: flex; align-items: center; justify-content: space-between; direction: ltr; margin: 10px 0; }
+.team-side { display: flex; align-items: center; gap: 6px; flex: 1; }
+.team-side.home { justify-content: flex-start; text-align: left; }
+.team-side.away { justify-content: flex-end; text-align: right; }
+.team-logo { width: 36px; height: 36px; object-fit: contain; }
+.vs-badge { font-weight: bold; color: #ff4757; padding: 0 8px; font-size: 14px; }
+.time-tag { font-size: 0.85em; color: #666; font-weight: bold; background: #f0f0f0; padding: 3px 8px; border-radius: 4px; display: inline-block; }
+.alert { background: #ff4757; color: white; padding: 10px; border-radius: 6px; margin: 10px auto; max-width: 480px; font-weight: bold; }
+.success { background: #2ed573; color: white; padding: 10px; border-radius: 6px; margin: 10px auto; max-width: 480px; font-weight: bold; }
+.status-won { color: #2ed573; font-weight: bold; }
+.status-lost { color: #ff4757; font-weight: bold; }
+.status-pending { color: #ffa500; font-weight: bold; }
+table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+th, td { padding: 8px; border-bottom: 1px solid #eee; text-align: center; font-size: 14px; }
 </style>
 </head>
 <body>
 <h1>ווינר חברים ⚽</h1>
-{% if error_msg %}<div class="alert">{{ error_msg }}</div>{% endif %}
+{% if msg %}<div class="{{ msg_class }}">{{ msg }}</div>{% endif %}
+
 {% if not user %}
 <div class="card">
   <h2>התחברות</h2>
   <form method="POST" action="/login">
-    <input type="text" name="username" placeholder="שם משתמש" required>
-    <button type="submit">היכנס</button>
+    <input type="text" name="username" placeholder="שם משתמש" required><br>
+    <button type="submit">היכנס למשחק</button>
   </form>
 </div>
 {% else %}
 <div class="nav">
-  <a href="/">משחקים</a> | <a href="/league">טבלה</a> | <a href="/history">היסטוריה</a> | <a href="/logout">יציאה</a>
+  <a href="/">משחקים</a>
+  <a href="/league">טבלה</a>
+  <a href="/history">היסטוריה</a>
+  <a href="/check_results" onclick="return confirm('להגריל תוצאות ולחלק זכיות?')">עדכן תוצאות</a>
+  <a href="/logout" style="background:#ff4757">יציאה</a>
 </div>
 <h3>שלום {{ user }} | יתרה: {{ balance }} ₪</h3>
 
 {% if view == 'games' %}
   {% if not games %}
-    <div class="card"><h3>אין משחקים פתוחים כרגע</h3></div>
+    <div class="card"><h3>אין משחקים עתידיים פתוחים כרגע</h3></div>
   {% endif %}
   {% for g in games %}
   <div class="card">
-    <div><img src="{{ g['logo1'] }}" class="team-logo"> <b>{{ g['team1'] }}</b> VS <b>{{ g['team2'] }}</b> <img src="{{ g['logo2'] }}" class="team-logo"></div>
+    {% if g['match_time'] %}<div class="time-tag">📅 {{ g['match_time'] }}</div>{% endif %}
+    <div class="match-header">
+      <div class="team-side home">
+        <img src="{{ g['logo1'] }}" class="team-logo">
+        <span><b>{{ g['team1'] }}</b></span>
+      </div>
+      <div class="vs-badge">VS</div>
+      <div class="team-side away">
+        <span><b>{{ g['team2'] }}</b></span>
+        <img src="{{ g['logo2'] }}" class="team-logo">
+      </div>
+    </div>
     <form method="POST" action="/bet">
       <input type="hidden" name="game_id" value="{{ g['id'] }}">
       <label><input type="radio" name="guess" value="1" required> 1 ({{ g['odd_1'] }})</label>
       <label><input type="radio" name="guess" value="X"> X ({{ g['odd_x'] }})</label>
       <label><input type="radio" name="guess" value="2"> 2 ({{ g['odd_2'] }})</label><br>
-      <input type="number" name="amount" placeholder="סכום" min="1" max="{{ balance }}" required>
+      <input type="number" name="amount" placeholder="סכום (₪)" min="1" max="{{ balance }}" required>
       <button type="submit">שלח הימור</button>
     </form>
   </div>
   {% endfor %}
 {% elif view == 'league' %}
   <div class="card">
-    <h2>טבלת הליגה</h2>
-    {% for u in users_league %}<p>{{ loop.index }}. {{ u['name'] }} - {{ u['balance'] }} ₪</p>{% endfor %}
+    <h2>טבלת הליגה 🏆</h2>
+    <table>
+      <tr><th>מיקום</th><th>שם</th><th>יתרה</th></tr>
+      {% for u in users_league %}
+      <tr><td>{{ loop.index }}</td><td>{{ u['name'] }}</td><td>{{ u['balance'] }} ₪</td></tr>
+      {% endfor %}
+    </table>
   </div>
 {% elif view == 'history' %}
   <div class="card">
-    <h2>ההימורים שלי</h2>
-    {% for b in user_bets %}<p>{{ b['team1'] }} - {{ b['team2'] }} | הימור: {{ b['guess'] }} | סכום: {{ b['amount'] }} | סטטוס: {{ b['status'] }}</p>{% endfor %}
+    <h2>ההימורים שלי 📜</h2>
+    {% if not user_bets %}<p>טרם ביצעת הימורים.</p>{% endif %}
+    {% for b in user_bets %}
+    <div style="border-bottom:1px solid #eee; padding:8px 0; text-align:right;">
+      <b>{{ b['team1'] }} vs {{ b['team2'] }}</b><br>
+      הימור: <b>{{ b['guess'] }}</b> | סכום: <b>{{ b['amount'] }} ₪</b> | סטטוס: 
+      <span class="status-{{ b['status'] }}">
+        {% if b['status'] == 'won' %}זכייה!🏆{% elif b['status'] == 'lost' %}הפסד❌{% else %}ממתין ⏳{% endif %}
+      </span>
+    </div>
+    {% endfor %}
   </div>
 {% endif %}
 {% endif %}
@@ -124,13 +183,19 @@ input { padding: 8px; margin: 5px; border: 1px solid #ccc; border-radius: 5px; }
 @app.route("/")
 def index():
     user = session.get("user")
-    error_msg = "כבר הימרת על המשחק הזה!" if request.args.get("error") == "already_bet" else None
-    if not user: return render_template_string(HTML, user=None)
+    status_param = request.args.get("msg")
+    msg, msg_class = None, "alert"
+    if status_param == "already_bet": msg = "כבר הימרת על המשחק הזה!"
+    elif status_param == "no_balance": msg = "אין לך מספיק יתרה להימור זה!"
+    elif status_param == "bet_placed": msg, msg_class = "ההימור נרשם בהצלחה!", "success"
+    elif status_param == "results_checked": msg, msg_class = "תוצאות המשחקים עודכנו והיתרות חושבו!", "success"
+    
+    if not user: return render_template_string(HTML, user=None, msg=msg, msg_class=msg_class)
     with get_db() as conn:
         row = conn.execute("SELECT balance FROM users WHERE name = ?", (user,)).fetchone()
         if not row: session.clear(); return redirect("/")
         games = conn.execute("SELECT * FROM games WHERE status = 'open'").fetchall()
-        return render_template_string(HTML, user=user, balance=row["balance"], games=games, view='games', error_msg=error_msg)
+        return render_template_string(HTML, user=user, balance=row["balance"], games=games, view='games', msg=msg, msg_class=msg_class)
 
 @app.route("/league")
 def league():
@@ -169,17 +234,46 @@ def logout():
 @app.route("/bet", methods=["POST"])
 def bet():
     user = session.get("user")
-    amount, game_id, guess = int(request.form.get("amount", 0)), int(request.form.get("game_id")), request.form.get("guess")
+    try:
+        amount = int(request.form.get("amount", 0))
+        game_id = int(request.form.get("game_id"))
+    except:
+        return redirect("/")
+    guess = request.form.get("guess")
+    
     if user and amount > 0:
         with get_db() as conn:
             if conn.execute("SELECT id FROM bets WHERE user = ? AND game_id = ?", (user, game_id)).fetchone():
-                return redirect("/?error=already_bet")
-            bal = conn.execute("SELECT balance FROM users WHERE name = ?", (user,)).fetchone()["balance"]
-            if bal >= amount:
-                conn.execute("UPDATE users SET balance = balance - ? WHERE name = ?", (amount, user))
-                conn.execute("INSERT INTO bets (user, game_id, guess, amount, timestamp, status) VALUES (?, ?, ?, ?, ?, 'pending')", (user, game_id, guess, amount, datetime.now().strftime("%Y-%m-%d %H:%M")))
-                conn.commit()
-    return redirect("/history")
+                return redirect("/?msg=already_bet")
+            row = conn.execute("SELECT balance FROM users WHERE name = ?", (user,)).fetchone()
+            if not row or row["balance"] < amount:
+                return redirect("/?msg=no_balance")
+            
+            conn.execute("UPDATE users SET balance = balance - ? WHERE name = ?", (amount, user))
+            conn.execute("INSERT INTO bets (user, game_id, guess, amount, timestamp, status) VALUES (?, ?, ?, ?, ?, 'pending')", 
+                         (user, game_id, guess, amount, datetime.now().strftime("%Y-%m-%d %H:%M")))
+            conn.commit()
+            return redirect("/?msg=bet_placed")
+    return redirect("/")
+
+@app.route("/check_results")
+def check_results():
+    with get_db() as conn:
+        open_games = conn.execute("SELECT id, odd_1, odd_x, odd_2 FROM games WHERE status = 'open'").fetchall()
+        for g in open_games:
+            result = random.choice(['1', 'X', '2'])
+            conn.execute("UPDATE games SET status = 'closed', result = ? WHERE id = ?", (result, g['id']))
+            pending_bets = conn.execute("SELECT id, user, amount, guess FROM bets WHERE game_id = ? AND status = 'pending'", (g['id'],)).fetchall()
+            for b in pending_bets:
+                if str(b['guess']) == result:
+                    odd = g['odd_1'] if result == '1' else (g['odd_x'] if result == 'X' else g['odd_2'])
+                    win_amount = int(b['amount'] * odd)
+                    conn.execute("UPDATE users SET balance = balance + ? WHERE name = ?", (win_amount, b['user']))
+                    conn.execute("UPDATE bets SET status = 'won' WHERE id = ?", (b['id'],))
+                else:
+                    conn.execute("UPDATE bets SET status = 'lost' WHERE id = ?", (b['id'],))
+        conn.commit()
+    return redirect("/?msg=results_checked")
 
 @app.route("/update_live")
 def update_live():
