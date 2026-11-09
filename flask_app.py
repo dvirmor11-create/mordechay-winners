@@ -18,45 +18,44 @@ def init_db():
         conn.execute("CREATE TABLE IF NOT EXISTS games (id INTEGER PRIMARY KEY, team1 TEXT, team2 TEXT, logo1 TEXT, logo2 TEXT, odd_1 REAL, odd_x REAL, odd_2 REAL, status TEXT DEFAULT 'open', result TEXT)")
         conn.execute("CREATE TABLE IF NOT EXISTS bets (id INTEGER PRIMARY KEY AUTOINCREMENT, user TEXT, game_id INTEGER, guess TEXT, amount INTEGER, timestamp TEXT, status TEXT DEFAULT 'pending')")
         conn.commit()
-        if conn.execute("SELECT COUNT(*) FROM games WHERE status = 'open'").fetchone()[0] == 0:
-            generate_weekly_games(conn)
-
-def generate_weekly_games(conn):
-    conn.execute("DELETE FROM games WHERE status = 'open'")
-    match_list = [
-        ("מכבי תל אביב", "מכבי חיפה", "https://media.api-sports.io/football/teams/739.png", "https://media.api-sports.io/football/teams/743.png", 1.85, 3.25, 3.80),
-        ("הפועל באר שבע", "בית ר ירושלים", "https://media.api-sports.io/football/teams/746.png", "https://media.api-sports.io/football/teams/740.png", 2.10, 3.10, 3.10),
-        ("הפועל תל אביב", "מכבי נתניה", "https://media.api-sports.io/football/teams/741.png", "https://media.api-sports.io/football/teams/747.png", 2.20, 3.00, 2.95)
-    ]
-    for idx, (t1, t2, l1, l2, o1, ox, o2) in enumerate(match_list, start=1):
-        conn.execute("INSERT OR REPLACE INTO games (id, team1, team2, logo1, logo2, odd_1, odd_x, odd_2, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')", (idx, t1, t2, l1, l2, o1, ox, o2))
-    conn.commit()
 
 def fetch_live_games():
     if not API_KEY: return False
     today = datetime.now().strftime("%Y-%m-%d")
     next_week = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
-    url = f"https://v3.football.api-sports.io/fixtures?league=390&season=2026&from={today}&to={next_week}"
     headers = {'x-rapidapi-host': "v3.football.api-sports.io", 'x-rapidapi-key': API_KEY}
-    try:
-        res = requests.get(url, headers=headers).json()
-        fixtures = res.get('response', [])
-        if not fixtures:
-            res = requests.get("https://v3.football.api-sports.io/fixtures?league=390&season=2026&next=10", headers=headers).json()
-            fixtures = res.get('response', [])
-        if not fixtures: return False
-        with get_db() as conn:
-            conn.execute("DELETE FROM games WHERE status = 'open'")
-            for idx, g in enumerate(fixtures, start=1):
+    
+    fixtures = []
+    # ליגות: 5 = ליגת האומות (UEFA Nations League), 383 = ליגת העל, 390 = לאומית
+    leagues = [5, 383, 390]
+    
+    for league_id in leagues:
+        url = f"https://v3.football.api-sports.io/fixtures?league={league_id}&from={today}&to={next_week}"
+        try:
+            res = requests.get(url, headers=headers, timeout=5).json()
+            fixtures.extend(res.get('response', []))
+        except Exception as e:
+            print(e)
+            
+    if not fixtures:
+        for league_id in leagues:
+            url = f"https://v3.football.api-sports.io/fixtures?league={league_id}&next=10"
+            try:
+                res = requests.get(url, headers=headers, timeout=5).json()
+                fixtures.extend(res.get('response', []))
+            except Exception as e:
+                print(e)
+
+    with get_db() as conn:
+        conn.execute("DELETE FROM games WHERE status = 'open'")
+        if fixtures:
+            for idx, g in enumerate(fixtures[:15], start=1):
                 t1, t2 = g['teams']['home']['name'], g['teams']['away']['name']
                 l1, l2 = g['teams']['home']['logo'], g['teams']['away']['logo']
                 o1, ox, o2 = round(random.uniform(1.8, 2.5), 2), round(random.uniform(2.8, 3.5), 2), round(random.uniform(2.0, 3.0), 2)
                 conn.execute("INSERT INTO games (id, team1, team2, logo1, logo2, odd_1, odd_x, odd_2, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')", (idx, t1, t2, l1, l2, o1, ox, o2))
-            conn.commit()
-        return True
-    except Exception as e:
-        print(e)
-        return False
+        conn.commit()
+    return len(fixtures) > 0
 
 init_db()
 
@@ -71,7 +70,7 @@ body { font-family: sans-serif; text-align: center; background: #1e3c72; color: 
 button { background: #ff4757; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 5px; }
 input { padding: 8px; margin: 5px; border: 1px solid #ccc; border-radius: 5px; }
 .nav a { color: white; margin: 0 10px; font-weight: bold; text-decoration: none; }
-.team-logo { width: 40px; height: 40px; }
+.team-logo { width: 40px; height: 40px; vertical-align: middle; }
 .alert { background: #ff4757; color: white; padding: 10px; border-radius: 5px; margin: 10px; }
 </style>
 </head>
@@ -93,6 +92,9 @@ input { padding: 8px; margin: 5px; border: 1px solid #ccc; border-radius: 5px; }
 <h3>שלום {{ user }} | יתרה: {{ balance }} ₪</h3>
 
 {% if view == 'games' %}
+  {% if not games %}
+    <div class="card"><h3>אין משחקים בשבוע הקרוב</h3></div>
+  {% endif %}
   {% for g in games %}
   <div class="card">
     <div><img src="{{ g['logo1'] }}" class="team-logo"> {{ g['team1'] }} VS {{ g['team2'] }} <img src="{{ g['logo2'] }}" class="team-logo"></div>
@@ -183,6 +185,5 @@ def bet():
 
 @app.route("/update_live")
 def update_live():
-    if not fetch_live_games():
-        with get_db() as conn: generate_weekly_games(conn)
-    return "Games updated", 200
+    found = fetch_live_games()
+    return f"Games updated. Live games found: {found}", 200
